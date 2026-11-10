@@ -318,7 +318,7 @@
                     <TextBox
                         x:Name="DialNumberBox"
                         Text="{x:Bind ViewModel.PhoneNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                        PlaceholderText="+420 739 017 476"
+                        PlaceholderText="Paste number"
                         FontSize="22"
                         FontWeight="SemiBold"
                         TextAlignment="Center"

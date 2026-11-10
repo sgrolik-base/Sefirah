@@ -15,6 +15,16 @@ public enum StartupOptions
     Maximized
 }
 
+/// <summary>Screen shown when the main window opens.</summary>
+public enum StartScreen
+{
+    LastUsed,
+    CallsDialer,
+    CallsHistory,
+    Messages,
+    Apps
+}
+
 public enum NotificationFilter
 {
     Disabled,

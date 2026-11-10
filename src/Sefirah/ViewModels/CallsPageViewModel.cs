@@ -204,6 +204,7 @@ public sealed partial class CallsPageViewModel : BaseViewModel
 
             case CallingLineStatus.Ready:
                 ShowDialer = true;
+                TryRunPendingAutoDial();
                 break;
         }
     }
@@ -234,11 +235,46 @@ public sealed partial class CallsPageViewModel : BaseViewModel
     public event EventHandler? ExternalDialPrepared;
     private bool externalDialPending;
 
-    public void PrepareExternalDial(string number)
+    // tel: link waiting for the Bluetooth line to become ready (cold start).
+    private string? autoDialNumber;
+    private DateTime autoDialDeadline;
+    private static readonly TimeSpan AutoDialWait = TimeSpan.FromSeconds(60);
+
+    public void PrepareExternalDial(string number, bool dialImmediately)
     {
         ApplySearchQueryAsNumber(number);
+        RequestShowDialer();
+
+        if (!dialImmediately)
+            return;
+
+        if (ShowDialer)
+        {
+            _ = DialAsync();
+            return;
+        }
+
+        autoDialNumber = PhoneNumber;
+        autoDialDeadline = DateTime.UtcNow + AutoDialWait;
+    }
+
+    /// <summary>Asks the page to show the dialer pane (matters in narrow layout).</summary>
+    public void RequestShowDialer()
+    {
         externalDialPending = true;
         ExternalDialPrepared?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void TryRunPendingAutoDial()
+    {
+        var number = autoDialNumber;
+        autoDialNumber = null;
+
+        // Only dial the number from the link, and only if it is still recent and unchanged.
+        if (number is null || DateTime.UtcNow > autoDialDeadline || number != PhoneNumber)
+            return;
+
+        _ = DialAsync();
     }
 
     public bool ConsumeExternalDialPending()

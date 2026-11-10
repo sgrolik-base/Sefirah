@@ -249,7 +249,8 @@ public partial class App : Application
         }
         else
         {
-            Ioc.Default.GetRequiredService<CallsPageViewModel>().PrepareExternalDial(link.Numbers[0]);
+            var dialImmediately = Ioc.Default.GetRequiredService<IUserSettingsService>().GeneralSettingsService.AutoDialTelLinks;
+            Ioc.Default.GetRequiredService<CallsPageViewModel>().PrepareExternalDial(link.Numbers[0], dialImmediately);
             mainPage.NavigateToPage("Calls");
         }
     }

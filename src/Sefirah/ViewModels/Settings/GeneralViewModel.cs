@@ -133,6 +133,39 @@ public sealed partial class GeneralViewModel : BaseViewModel
         }
     }
 
+    public Dictionary<StartScreen, string> StartScreenTypes { get; } = new()
+    {
+        { StartScreen.LastUsed, "Last used" },
+        { StartScreen.CallsDialer, "Calls – dialer" },
+        { StartScreen.CallsHistory, "Calls – history" },
+        { StartScreen.Messages, "Messages" },
+        { StartScreen.Apps, "Apps" }
+    };
+
+    private string selectedStartScreen;
+    public string SelectedStartScreen
+    {
+        get => selectedStartScreen;
+        set
+        {
+            if (SetProperty(ref selectedStartScreen, value))
+                UserSettingsService.GeneralSettingsService.StartScreen = StartScreenTypes.First(t => t.Value == value).Key;
+        }
+    }
+
+    public bool AutoDialTelLinks
+    {
+        get => UserSettingsService.GeneralSettingsService.AutoDialTelLinks;
+        set
+        {
+            if (value != UserSettingsService.GeneralSettingsService.AutoDialTelLinks)
+            {
+                UserSettingsService.GeneralSettingsService.AutoDialTelLinks = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     private LocalDeviceEntity? localDevice;
 
     private string _localDeviceName = string.Empty;
@@ -240,6 +273,7 @@ public sealed partial class GeneralViewModel : BaseViewModel
         selectedThemeType = ThemeTypes[CurrentTheme];
         selectedBackdropMaterial = BackdropMaterialTypes[BackdropMaterial];
         selectedStartupType = StartupTypes[StartupOption];
+        selectedStartScreen = StartScreenTypes[UserSettingsService.GeneralSettingsService.StartScreen];
         selectedStorageMountPreference = StorageMountPreferenceTypes[StorageMountPreference];
         selectedAppLanguageIndex = AppLanguageHelper.SupportedLanguages.IndexOf(AppLanguageHelper.PreferredLanguage);
         // Load initial local device name

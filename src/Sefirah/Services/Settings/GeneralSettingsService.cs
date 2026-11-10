@@ -22,6 +22,18 @@ internal sealed partial class GeneralSettingsService : BaseObservableJsonSetting
         set => Set(value);
     }
 
+    public StartScreen StartScreen
+    {
+        get => Get(StartScreen.LastUsed);
+        set => Set(value);
+    }
+
+    public bool AutoDialTelLinks
+    {
+        get => Get(true);
+        set => Set(value);
+    }
+
     public Theme Theme
     {
         get => Get(Theme.Default);

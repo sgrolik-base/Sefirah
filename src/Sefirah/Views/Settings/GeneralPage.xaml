@@ -50,6 +50,25 @@
                         SelectedItem="{x:Bind ViewModel.SelectedStartupType, Mode=TwoWay}" />
                 </wuc:SettingsCard>
 
+                <!--  Start screen -->
+                <wuc:SettingsCard Description="Screen shown when Sefirah opens" Header="Start screen">
+                    <wuc:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE80F;" />
+                    </wuc:SettingsCard.HeaderIcon>
+                    <ComboBox
+                        MinWidth="140"
+                        ItemsSource="{x:Bind ViewModel.StartScreenTypes.Values}"
+                        SelectedItem="{x:Bind ViewModel.SelectedStartScreen, Mode=TwoWay}" />
+                </wuc:SettingsCard>
+
+                <!--  tel: links -->
+                <wuc:SettingsCard Description="When a phone number link (tel:) is opened, start the call right away instead of only filling the dialer" Header="Dial phone links immediately">
+                    <wuc:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE717;" />
+                    </wuc:SettingsCard.HeaderIcon>
+                    <ToggleSwitch IsOn="{x:Bind ViewModel.AutoDialTelLinks, Mode=TwoWay}" />
+                </wuc:SettingsCard>
+
                 <!--  Backdrop material -->
                 <wuc:SettingsCard Header="{helpers:ResourceString Name=BackdropMaterial}">
                     <wuc:SettingsCard.HeaderIcon>

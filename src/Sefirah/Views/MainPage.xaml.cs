@@ -129,10 +129,20 @@ public sealed partial class MainPage : Page
 
     private void MainNavigationView_Loaded(object sender, RoutedEventArgs e)
     {
-        var savedPage = ApplicationData.Current.LocalSettings.Values[Constants.LocalSettings.MainNavigationSelection] as string;
+        var startScreen = Ioc.Default.GetRequiredService<IUserSettingsService>().GeneralSettingsService.StartScreen;
+        var savedPage = startScreen switch
+        {
+            StartScreen.CallsDialer or StartScreen.CallsHistory => "Calls",
+            StartScreen.Messages => "Messages",
+            StartScreen.Apps => "Apps",
+            _ => ApplicationData.Current.LocalSettings.Values[Constants.LocalSettings.MainNavigationSelection] as string
+        };
         var page = ViewModel.Device is not null && savedPage is not null && Pages.ContainsKey(savedPage)
             ? savedPage
             : "Settings";
+
+        if (page == "Calls" && startScreen == StartScreen.CallsDialer)
+            Ioc.Default.GetRequiredService<CallsPageViewModel>().RequestShowDialer();
 
         NavigateToPage(page);
 

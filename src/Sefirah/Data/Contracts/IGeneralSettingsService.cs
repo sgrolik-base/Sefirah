@@ -10,6 +10,16 @@ public interface IGeneralSettingsService : IBaseSettingsService, INotifyProperty
     StartupOptions StartupOption { get; set; }
 
     /// <summary>
+    /// Gets or sets the screen shown when the main window opens.
+    /// </summary>
+    StartScreen StartScreen { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether a tel: link starts the call right away instead of only filling the dialer.
+    /// </summary>
+    bool AutoDialTelLinks { get; set; }
+
+    /// <summary>
     /// Gets or sets the theme for the application.
     /// </summary>
     Theme Theme { get; set; }
