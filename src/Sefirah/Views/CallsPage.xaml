@@ -145,11 +145,25 @@
 
                                 <StackPanel Grid.Column="1" Spacing="2">
                                     <TextBlock Text="{x:Bind CallContact.DisplayName, Mode=OneWay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock
-                                        FontSize="12"
-                                        Opacity="0.7"
-                                        Text="{x:Bind CallTypeAndDuration, Mode=OneWay}"
-                                        TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <FontIcon
+                                            Glyph="&#xE717;"
+                                            FontSize="12"
+                                            VerticalAlignment="Center"
+                                            Foreground="{x:Bind helpers:CallStatusHelper.StatusBrush(Outcome)}" />
+                                        <TextBlock
+                                            FontSize="12"
+                                            FontWeight="Bold"
+                                            VerticalAlignment="Center"
+                                            Text="{x:Bind DirectionArrow}"
+                                            Foreground="{x:Bind helpers:CallStatusHelper.StatusBrush(Outcome)}" />
+                                        <TextBlock
+                                            FontSize="12"
+                                            VerticalAlignment="Center"
+                                            Text="{x:Bind CallTypeAndDuration, Mode=OneWay}"
+                                            Foreground="{x:Bind helpers:CallStatusHelper.StatusBrush(Outcome)}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                 </StackPanel>
                                 <StackPanel
                                     Grid.Column="2"
@@ -317,7 +331,7 @@
                 <StackPanel VerticalAlignment="Center" Spacing="12">
                     <AutoSuggestBox
                         x:Name="DialNumberBox"
-                        PlaceholderText="Paste number or search contacts"
+                        PlaceholderText="Num or search"
                         FontSize="22"
                         FontWeight="SemiBold"
                         HorizontalAlignment="Stretch"
@@ -325,6 +339,8 @@
                         ItemTemplate="{StaticResource ContactSearchSuggestionTemplate}"
                         UpdateTextOnSelect="False"
                         TextChanged="DialNumberBox_TextChanged"
+                        SuggestionChosen="DialNumberBox_SuggestionChosen"
+                        PreviewKeyDown="DialNumberBox_PreviewKeyDown"
                         QuerySubmitted="DialNumberBox_QuerySubmitted">
                         <AutoSuggestBox.TextBoxStyle>
                             <Style TargetType="TextBox" BasedOn="{StaticResource AutoSuggestBoxTextBoxStyle}">

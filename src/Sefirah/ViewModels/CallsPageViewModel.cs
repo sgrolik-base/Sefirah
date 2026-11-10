@@ -124,14 +124,39 @@ public sealed partial class CallsPageViewModel : BaseViewModel
                 var existingIndex = CallLogs.IndexOf(existing);
                 CallLogs.RemoveAt(existingIndex);
                 InsertOrdered(callLog);
+                ScheduleCallLogExport();
                 return;
             }
 
             InsertOrdered(callLog);
+            ScheduleCallLogExport();
 
             OnPropertyChanged(nameof(ShowCallLogEmpty));
             OnPropertyChanged(nameof(ShowCallLogList));
         });
+    }
+
+    private CancellationTokenSource? exportDelay;
+
+    /// <summary>Exports the call history a moment after the last change (call-log syncs arrive in bursts).</summary>
+    private async void ScheduleCallLogExport()
+    {
+        exportDelay?.Cancel();
+        var cts = exportDelay = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+            var snapshot = CallLogs.ToList();
+            var deviceName = ActiveDevice?.Name ?? string.Empty;
+            await Task.Run(() => CallLogExporter.ExportAsync(deviceName, snapshot));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("Call log export failed", ex);
+        }
     }
 
     private async void LoadCallLogs()
@@ -149,6 +174,7 @@ public sealed partial class CallsPageViewModel : BaseViewModel
             var logs = await callLogRepository.GetCallLogsAsync(ActiveDevice.Id);
             CallLogs.Clear();
             CallLogs.AddRange(logs);
+            ScheduleCallLogExport();
         }
         finally
         {

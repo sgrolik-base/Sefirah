@@ -51,5 +51,40 @@ public partial class CallLog(Contact callContact) : ObservableObject
         }
     }
 
-    public string CallTypeAndDuration => string.IsNullOrWhiteSpace(FormattedDuration) ? $"{CallType}" : $"{CallType} · {FormattedDuration}";
+    public string CallTypeAndDuration => Outcome switch
+    {
+        CallOutcome.Connected => $"{CallType} · {FormattedDuration}",
+        CallOutcome.NotConnected => $"{CallType} · not connected",
+        _ => $"{CallType}"
+    };
+
+    public bool IsOutgoing => CallType is CallLogType.Outgoing;
+
+    /// <summary>A call counts as connected when it was answered and lasted more than 0 seconds.</summary>
+    public bool IsConnected => Outcome is CallOutcome.Connected;
+
+    public CallOutcome Outcome => CallType switch
+    {
+        CallLogType.Incoming or CallLogType.Outgoing or CallLogType.AnsweredExternally
+            => DurationSeconds > 0 ? CallOutcome.Connected : CallOutcome.NotConnected,
+        CallLogType.Missed => CallOutcome.Missed,
+        CallLogType.Rejected => CallOutcome.Rejected,
+        CallLogType.Blocked => CallOutcome.Blocked,
+        CallLogType.Voicemail => CallOutcome.Voicemail,
+        _ => CallOutcome.Unknown
+    };
+
+    /// <summary>↗ outgoing, ↙ incoming/missed/rejected.</summary>
+    public string DirectionArrow => IsOutgoing ? "↗" : "↙";
+}
+
+public enum CallOutcome
+{
+    Connected,
+    NotConnected,
+    Missed,
+    Rejected,
+    Blocked,
+    Voicemail,
+    Unknown
 }

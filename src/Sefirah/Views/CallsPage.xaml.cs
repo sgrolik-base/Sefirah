@@ -172,6 +172,7 @@ public sealed partial class CallsPage : Page
         if (args.Reason is not AutoSuggestionBoxTextChangeReason.UserInput)
             return;
 
+        highlightedContact = null;
         var text = sender.Text;
         if (text.Any(char.IsLetter))
         {
@@ -193,17 +194,72 @@ public sealed partial class CallsPage : Page
         }
     }
 
+    // Contact highlighted with the arrow keys; it is applied right away (without rewriting the search text).
+    private Contact? highlightedContact;
+
+    private void DialNumberBox_SuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
+    {
+        if (args.SelectedItem is not Contact contact)
+            return;
+
+        highlightedContact = contact;
+        updatingNumberFromBox = true;
+        ViewModel.ApplyContactToDialer(contact);
+        updatingNumberFromBox = false;
+    }
+
+    /// <summary>
+    /// The contact Enter/Tab should take: the highlighted one, otherwise the first suggestion
+    /// when searching by name or by a partial number. A full typed number is dialed as typed.
+    /// </summary>
+    private Contact? PickSuggestion(AutoSuggestBox box)
+    {
+        if (highlightedContact is not null)
+            return highlightedContact;
+
+        if (box.ItemsSource is not List<Contact> { Count: > 0 } suggestions)
+            return null;
+
+        var text = box.Text;
+        var digits = PhoneNumberUtils.CleanDialInput(text);
+        var isPartialNumber = !text.Any(char.IsLetter) && digits.TrimStart('+').Length < 9;
+        return text.Any(char.IsLetter) || isPartialNumber ? suggestions[0] : null;
+    }
+
+    private void ApplySuggestion(AutoSuggestBox box, Contact contact)
+    {
+        box.ItemsSource = null;
+        highlightedContact = null;
+        ViewModel.ApplyContactToDialer(contact);
+        if (box.Text != ViewModel.PhoneNumber)
+            box.Text = ViewModel.PhoneNumber;
+    }
+
     private async void DialNumberBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
     {
-        sender.ItemsSource = null;
-        if (args.ChosenSuggestion is Contact contact)
+        var contact = args.ChosenSuggestion as Contact ?? PickSuggestion(sender);
+        if (contact is not null)
         {
-            ViewModel.ApplyContactToDialer(contact);
+            // First Enter fills the contact; the next Enter dials it.
+            ApplySuggestion(sender, contact);
             return;
         }
 
+        sender.ItemsSource = null;
         if (!string.IsNullOrEmpty(ViewModel.PhoneNumber))
             await ViewModel.DialAsync();
+    }
+
+    private void DialNumberBox_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is not VirtualKey.Tab || sender is not AutoSuggestBox box)
+            return;
+
+        if (PickSuggestion(box) is { } contact)
+        {
+            ApplySuggestion(box, contact);
+            e.Handled = true;
+        }
     }
 
     private List<Contact> allContacts = [];
