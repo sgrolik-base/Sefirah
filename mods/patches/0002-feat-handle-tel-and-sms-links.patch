@@ -1,0 +1,344 @@
+From 67002dd307f024b6c21275424cf12313d3af842b Mon Sep 17 00:00:00 2001
+From: sgrolik-base <s.grolik@baselinker.com>
+Date: Tue, 10 Nov 2026 16:53:02 +0100
+Subject: [PATCH 2/6] feat: handle tel: and sms: links
+
+- Register tel and sms protocols so Sefirah can be picked as the
+  Windows default app for phone and SMS links
+- ExternalLinkParser: tel:/sms: with comma-separated recipients and
+  body=, percent-decoded once ('+' kept), numbers cleaned with
+  CleanDialInput; sefirah:// keeps its scrcpy handler
+- Links prefill the dialer or a new SMS draft and switch to that page
+  (also in narrow layout); nothing is dialed or sent automatically
+- Links arriving during cold start are applied once MainPage loads
+- Guard contact lookup when no device is active
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/Sefirah/App.xaml.cs                      | 38 +++++++++-
+ src/Sefirah/Package.appxmanifest             | 10 +++
+ src/Sefirah/Utils/ExternalLinkParser.cs      | 74 ++++++++++++++++++++
+ src/Sefirah/ViewModels/CallsPageViewModel.cs | 24 ++++++-
+ src/Sefirah/ViewModels/MessagesViewModel.cs  | 21 ++++++
+ src/Sefirah/Views/CallsPage.xaml.cs          | 14 +++-
+ src/Sefirah/Views/MainPage.xaml.cs           |  3 +
+ src/Sefirah/Views/MessagesPage.xaml.cs       | 14 +++-
+ 8 files changed, 192 insertions(+), 6 deletions(-)
+ create mode 100644 src/Sefirah/Utils/ExternalLinkParser.cs
+
+diff --git a/src/Sefirah/App.xaml.cs b/src/Sefirah/App.xaml.cs
+index c385a59..4ec0e3e 100644
+--- a/src/Sefirah/App.xaml.cs
++++ b/src/Sefirah/App.xaml.cs
+@@ -2,6 +2,8 @@ using CommunityToolkit.WinUI;
+ using Microsoft.UI.Xaml.Media.Animation;
+ using Microsoft.Windows.AppLifecycle;
+ using Sefirah.Helpers;
++using Sefirah.Utils;
++using Sefirah.ViewModels;
+ using Sefirah.Views;
+ using Sefirah.Views.Onboarding;
+ using Windows.ApplicationModel.Activation;
+@@ -179,9 +181,17 @@ public partial class App : Application
+         await MainWindow.DispatcherQueue.EnqueueAsync(() => InitializeApplicationAsync(activatedEventArgs));
+     }
+ 
+-    /// <summary>Parses sefirah://&lt;package&gt; and launches scrcpy for that package.</summary>
++    /// <summary>Handles tel:/sms: links, otherwise parses sefirah://&lt;package&gt; and launches scrcpy for that package.</summary>
+     private static async void HandleProtocolActivationArgs(ProtocolActivatedEventArgs protocolArgs)
+     {
++        var link = ExternalLinkParser.Parse(protocolArgs.Uri.OriginalString);
++        if (link is not null)
++        {
++            PendingExternalLink = link;
++            TryApplyPendingExternalLink();
++            return;
++        }
++
+         var package = protocolArgs.Uri.Host;
+         if (string.IsNullOrEmpty(package)) return;
+         var screenMirror = Ioc.Default.GetRequiredService<IScreenMirrorService>();
+@@ -195,6 +205,8 @@ public partial class App : Application
+             switch (activatedEventArgs.Data)
+             {
+                 case ProtocolActivatedEventArgs protocolArgs:
++                    if (ExternalLinkParser.Parse(protocolArgs.Uri.OriginalString) is not null)
++                        ShowMainWindow();
+                     HandleProtocolActivationArgs(protocolArgs);
+                     break;
+                 case ShareTargetActivatedEventArgs shareArgs:
+@@ -218,6 +230,30 @@ public partial class App : Application
+ 
+ #endif
+ 
++    /// <summary>tel:/sms: link waiting until the main page exists. Kept in memory only.</summary>
++    private static ExternalLink? PendingExternalLink;
++
++    /// <summary>Prefills the dialer or a new SMS draft from a pending link. Never calls or sends.</summary>
++    public static void TryApplyPendingExternalLink()
++    {
++        if (PendingExternalLink is not { } link)
++            return;
++        if (MainWindow?.Content is not Frame { Content: MainPage mainPage })
++            return;
++
++        PendingExternalLink = null;
++        if (link.IsSms)
++        {
++            Ioc.Default.GetRequiredService<MessagesViewModel>().PrepareExternalDraft(link.Numbers, link.Body);
++            mainPage.NavigateToPage("Messages");
++        }
++        else
++        {
++            Ioc.Default.GetRequiredService<CallsPageViewModel>().PrepareExternalDial(link.Numbers[0]);
++            mainPage.NavigateToPage("Calls");
++        }
++    }
++
+     private void HookEventsForWindow()
+     {
+ #if WINDOWS
+diff --git a/src/Sefirah/Package.appxmanifest b/src/Sefirah/Package.appxmanifest
+index d0c7175..f7b6c20 100644
+--- a/src/Sefirah/Package.appxmanifest
++++ b/src/Sefirah/Package.appxmanifest
+@@ -65,6 +65,16 @@
+                         <uap:DisplayName>Sefirah</uap:DisplayName>
+                     </uap:Protocol>
+                 </uap:Extension>
++                <uap:Extension Category="windows.protocol">
++                    <uap:Protocol Name="tel">
++                        <uap:DisplayName>Sefirah</uap:DisplayName>
++                    </uap:Protocol>
++                </uap:Extension>
++                <uap:Extension Category="windows.protocol">
++                    <uap:Protocol Name="sms">
++                        <uap:DisplayName>Sefirah</uap:DisplayName>
++                    </uap:Protocol>
++                </uap:Extension>
+                 <uap:Extension Category="windows.shareTarget">
+                     <uap:ShareTarget>
+                         <uap:SupportedFileTypes>
+diff --git a/src/Sefirah/Utils/ExternalLinkParser.cs b/src/Sefirah/Utils/ExternalLinkParser.cs
+new file mode 100644
+index 0000000..35d340e
+--- /dev/null
++++ b/src/Sefirah/Utils/ExternalLinkParser.cs
+@@ -0,0 +1,74 @@
++namespace Sefirah.Utils;
++
++/// <summary>A tel: or sms: link opened from Windows. It only prefills UI, never calls or sends.</summary>
++public sealed record ExternalLink(bool IsSms, IReadOnlyList<string> Numbers, string? Body);
++
++public static class ExternalLinkParser
++{
++    /// <summary>
++    /// Parses "tel:+420 739 017 476" or "sms:+420739017476,+421...?body=Ahoj%20%C5%A0t%C4%9Bp%C3%A1ne".
++    /// Returns null for other schemes or links without anything usable.
++    /// </summary>
++    public static ExternalLink? Parse(string? rawUri)
++    {
++        if (string.IsNullOrWhiteSpace(rawUri))
++            return null;
++
++        var colon = rawUri.IndexOf(':');
++        if (colon <= 0)
++            return null;
++
++        var scheme = rawUri[..colon].Trim();
++        var rest = rawUri[(colon + 1)..].TrimStart('/');
++        var isTel = scheme.Equals("tel", StringComparison.OrdinalIgnoreCase);
++        var isSms = scheme.Equals("sms", StringComparison.OrdinalIgnoreCase)
++            || scheme.Equals("smsto", StringComparison.OrdinalIgnoreCase);
++        if (!isTel && !isSms)
++            return null;
++
++        var queryStart = rest.IndexOf('?');
++        var addressPart = queryStart >= 0 ? rest[..queryStart] : rest;
++        var query = queryStart >= 0 ? rest[(queryStart + 1)..] : string.Empty;
++
++        // Parameters after ';' (ext=, phone-context=) are not dialable digits.
++        var paramStart = addressPart.IndexOf(';');
++        if (paramStart >= 0)
++            addressPart = addressPart[..paramStart];
++
++        var numbers = addressPart
++            .Split(',', StringSplitOptions.RemoveEmptyEntries)
++            .Select(a => PhoneNumberUtils.CleanDialInput(Unescape(a)))
++            .Where(n => n.Length > 0)
++            .Distinct()
++            .ToList();
++
++        if (isTel)
++            return numbers.Count > 0 ? new ExternalLink(false, [numbers[0]], null) : null;
++
++        string? body = null;
++        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
++        {
++            var eq = pair.IndexOf('=');
++            var key = eq >= 0 ? pair[..eq] : pair;
++            if (key.Equals("body", StringComparison.OrdinalIgnoreCase))
++                body = eq >= 0 ? Unescape(pair[(eq + 1)..]) : string.Empty;
++        }
++
++        return numbers.Count > 0 || !string.IsNullOrEmpty(body)
++            ? new ExternalLink(true, numbers, body)
++            : null;
++    }
++
++    // '+' stays '+' (RFC 3986), only %XX is decoded.
++    private static string Unescape(string value)
++    {
++        try
++        {
++            return Uri.UnescapeDataString(value);
++        }
++        catch (UriFormatException)
++        {
++            return value;
++        }
++    }
++}
+diff --git a/src/Sefirah/ViewModels/CallsPageViewModel.cs b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+index 8c6785b..3b4f6a8 100644
+--- a/src/Sefirah/ViewModels/CallsPageViewModel.cs
++++ b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+@@ -47,13 +47,13 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+ 
+     partial void OnPhoneNumberChanged(string oldValue, string newValue)
+     {
+-        if (string.IsNullOrEmpty(newValue))
++        if (string.IsNullOrEmpty(newValue) || ActiveDevice is null)
+         {
+             DialContact = null;
+             return;
+         }
+-        
+-        DialContact = contactRepository.LookupContact(ActiveDevice!.Id, newValue);
++
++        DialContact = contactRepository.LookupContact(ActiveDevice.Id, newValue);
+     }
+ 
+     [ObservableProperty]
+@@ -230,6 +230,24 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+         PhoneNumber = q;
+     }
+ 
++    /// <summary>Raised when a tel: link prefilled the dialer, so the page can show it in narrow layout.</summary>
++    public event EventHandler? ExternalDialPrepared;
++    private bool externalDialPending;
++
++    public void PrepareExternalDial(string number)
++    {
++        ApplySearchQueryAsNumber(number);
++        externalDialPending = true;
++        ExternalDialPrepared?.Invoke(this, EventArgs.Empty);
++    }
++
++    public bool ConsumeExternalDialPending()
++    {
++        var pending = externalDialPending;
++        externalDialPending = false;
++        return pending;
++    }
++
+     public async Task RetryCallingSetupAsync()
+     {
+         await phoneLineService.RefreshStateAsync();
+diff --git a/src/Sefirah/ViewModels/MessagesViewModel.cs b/src/Sefirah/ViewModels/MessagesViewModel.cs
+index 4759229..ccd9647 100644
+--- a/src/Sefirah/ViewModels/MessagesViewModel.cs
++++ b/src/Sefirah/ViewModels/MessagesViewModel.cs
+@@ -601,6 +601,27 @@ public sealed partial class MessagesViewModel : BaseViewModel
+         StagedAttachments.Clear();
+     }
+ 
++    /// <summary>Raised when an sms: link prefilled a new draft, so the page can show it in narrow layout.</summary>
++    public event EventHandler? ExternalDraftPrepared;
++    private bool externalDraftPending;
++
++    public void PrepareExternalDraft(IReadOnlyList<string> numbers, string? body)
++    {
++        StartNewConversation();
++        foreach (var number in numbers)
++            AddAddress(contactRepository.GetContact(ActiveDevice?.Id, number));
++        MessageText = body ?? string.Empty;
++        externalDraftPending = true;
++        ExternalDraftPrepared?.Invoke(this, EventArgs.Empty);
++    }
++
++    public bool ConsumeExternalDraftPending()
++    {
++        var pending = externalDraftPending;
++        externalDraftPending = false;
++        return pending;
++    }
++
+     public void AddAddress(Contact contact)
+     {
+         NewConversationRecipients.Add(contact);
+diff --git a/src/Sefirah/Views/CallsPage.xaml.cs b/src/Sefirah/Views/CallsPage.xaml.cs
+index 52d78c6..c06cde6 100644
+--- a/src/Sefirah/Views/CallsPage.xaml.cs
++++ b/src/Sefirah/Views/CallsPage.xaml.cs
+@@ -22,8 +22,20 @@ public sealed partial class CallsPage : Page
+         {
+             UpdatePaneLayout();
+             HookWindowKeys(true);
++            ViewModel.ExternalDialPrepared += OnExternalDialPrepared;
++            OnExternalDialPrepared(this, EventArgs.Empty);
+         };
+-        Unloaded += (_, _) => HookWindowKeys(false);
++        Unloaded += (_, _) =>
++        {
++            HookWindowKeys(false);
++            ViewModel.ExternalDialPrepared -= OnExternalDialPrepared;
++        };
++    }
++
++    private void OnExternalDialPrepared(object? sender, EventArgs e)
++    {
++        if (ViewModel.ConsumeExternalDialPending())
++            ShowDialer();
+     }
+ 
+     private const double TwoPaneMinWidth = 900;
+diff --git a/src/Sefirah/Views/MainPage.xaml.cs b/src/Sefirah/Views/MainPage.xaml.cs
+index a6488ac..323d0e2 100644
+--- a/src/Sefirah/Views/MainPage.xaml.cs
++++ b/src/Sefirah/Views/MainPage.xaml.cs
+@@ -135,6 +135,9 @@ public sealed partial class MainPage : Page
+             : "Settings";
+ 
+         NavigateToPage(page);
++
++        // A tel:/sms: link that arrived before the main page existed (cold start).
++        App.TryApplyPendingExternalLink();
+     }
+ 
+     private void NavigationView_SelectionChanged(NavigationView _, NavigationViewSelectionChangedEventArgs args)
+diff --git a/src/Sefirah/Views/MessagesPage.xaml.cs b/src/Sefirah/Views/MessagesPage.xaml.cs
+index 61b275a..473d186 100644
+--- a/src/Sefirah/Views/MessagesPage.xaml.cs
++++ b/src/Sefirah/Views/MessagesPage.xaml.cs
+@@ -21,7 +21,19 @@ public sealed partial class MessagesPage : Page
+         InitializeComponent();
+         ViewModel = Ioc.Default.GetRequiredService<MessagesViewModel>();
+         DataContext = ViewModel;
+-        Loaded += (_, _) => UpdatePaneLayout();
++        Loaded += (_, _) =>
++        {
++            UpdatePaneLayout();
++            ViewModel.ExternalDraftPrepared += OnExternalDraftPrepared;
++            OnExternalDraftPrepared(this, EventArgs.Empty);
++        };
++        Unloaded += (_, _) => ViewModel.ExternalDraftPrepared -= OnExternalDraftPrepared;
++    }
++
++    private void OnExternalDraftPrepared(object? sender, EventArgs e)
++    {
++        if (ViewModel.ConsumeExternalDraftPending())
++            ShowConversationDetail();
+     }
+ 
+     private ScrollViewer? messagesScrollViewer;

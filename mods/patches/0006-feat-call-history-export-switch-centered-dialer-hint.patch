@@ -1,0 +1,180 @@
+From 607bbf2bba5b5648bc3c31a8871e80792855eb64 Mon Sep 17 00:00:00 2001
+From: sgrolik-base <s.grolik@baselinker.com>
+Date: Tue, 10 Nov 2026 17:52:14 +0100
+Subject: [PATCH 6/6] feat: call-history export switch, centered dialer hint
+
+- Settings > General > Export call history (on by default) turns the
+  Documents\\Sefirah\\call-log.json/.csv export on or off
+- Dialer 'Num or search' hint is a centered overlay (the built-in
+  AutoSuggestBox placeholder ignores TextAlignment)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../Data/Contracts/IGeneralSettingsService.cs    |  5 +++++
+ .../Services/Settings/GeneralSettingsService.cs  |  6 ++++++
+ src/Sefirah/ViewModels/CallsPageViewModel.cs     |  3 +++
+ .../ViewModels/Settings/GeneralViewModel.cs      | 16 ++++++++++++++++
+ src/Sefirah/Views/CallsPage.xaml                 | 15 +++++++++++++--
+ src/Sefirah/Views/CallsPage.xaml.cs              |  3 +++
+ src/Sefirah/Views/Settings/GeneralPage.xaml      |  8 ++++++++
+ 7 files changed, 54 insertions(+), 2 deletions(-)
+
+diff --git a/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs b/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs
+index 8b98331..d0da1e0 100644
+--- a/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs
++++ b/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs
+@@ -19,6 +19,11 @@ public interface IGeneralSettingsService : IBaseSettingsService, INotifyProperty
+     /// </summary>
+     bool AutoDialTelLinks { get; set; }
+ 
++    /// <summary>
++    /// Gets or sets whether the call history is exported to Documents\Sefirah\call-log.json/.csv.
++    /// </summary>
++    bool ExportCallLog { get; set; }
++
+     /// <summary>
+     /// Gets or sets the theme for the application.
+     /// </summary>
+diff --git a/src/Sefirah/Services/Settings/GeneralSettingsService.cs b/src/Sefirah/Services/Settings/GeneralSettingsService.cs
+index 73c7c9f..66f53d4 100644
+--- a/src/Sefirah/Services/Settings/GeneralSettingsService.cs
++++ b/src/Sefirah/Services/Settings/GeneralSettingsService.cs
+@@ -34,6 +34,12 @@ internal sealed partial class GeneralSettingsService : BaseObservableJsonSetting
+         set => Set(value);
+     }
+ 
++    public bool ExportCallLog
++    {
++        get => Get(true);
++        set => Set(value);
++    }
++
+     public Theme Theme
+     {
+         get => Get(Theme.Default);
+diff --git a/src/Sefirah/ViewModels/CallsPageViewModel.cs b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+index 833e72f..2a9c4a4 100644
+--- a/src/Sefirah/ViewModels/CallsPageViewModel.cs
++++ b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+@@ -146,6 +146,9 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+         try
+         {
+             await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
++            if (!Ioc.Default.GetRequiredService<IUserSettingsService>().GeneralSettingsService.ExportCallLog)
++                return;
++
+             var snapshot = CallLogs.ToList();
+             var deviceName = ActiveDevice?.Name ?? string.Empty;
+             await Task.Run(() => CallLogExporter.ExportAsync(deviceName, snapshot));
+diff --git a/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs b/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs
+index a5a6613..c297ee3 100644
+--- a/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs
++++ b/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs
+@@ -2,6 +2,7 @@ using CommunityToolkit.WinUI;
+ using Sefirah.Data.AppDatabase.Models;
+ using Sefirah.Data.Items;
+ using Sefirah.Helpers;
++using Sefirah.Utils;
+ 
+ namespace Sefirah.ViewModels.Settings;
+ public sealed partial class GeneralViewModel : BaseViewModel
+@@ -166,6 +167,21 @@ public sealed partial class GeneralViewModel : BaseViewModel
+         }
+     }
+ 
++    public bool ExportCallLog
++    {
++        get => UserSettingsService.GeneralSettingsService.ExportCallLog;
++        set
++        {
++            if (value != UserSettingsService.GeneralSettingsService.ExportCallLog)
++            {
++                UserSettingsService.GeneralSettingsService.ExportCallLog = value;
++                OnPropertyChanged();
++            }
++        }
++    }
++
++    public string CallLogExportFolder => CallLogExporter.ExportFolder;
++
+     private LocalDeviceEntity? localDevice;
+ 
+     private string _localDeviceName = string.Empty;
+diff --git a/src/Sefirah/Views/CallsPage.xaml b/src/Sefirah/Views/CallsPage.xaml
+index 439e345..42a2d5d 100644
+--- a/src/Sefirah/Views/CallsPage.xaml
++++ b/src/Sefirah/Views/CallsPage.xaml
+@@ -329,13 +329,23 @@
+                 Visibility="{x:Bind ViewModel.ShowDialer, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+ 
+                 <StackPanel VerticalAlignment="Center" Spacing="12">
++                    <!-- Own centered hint: the built-in placeholder ignores TextAlignment. -->
++                    <Grid MaxWidth="300" HorizontalAlignment="Stretch">
++                    <TextBlock
++                        x:Name="DialNumberHint"
++                        Text="Num or search"
++                        FontSize="22"
++                        FontWeight="SemiBold"
++                        HorizontalAlignment="Center"
++                        VerticalAlignment="Center"
++                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
++                        IsHitTestVisible="False"
++                        Canvas.ZIndex="1" />
+                     <AutoSuggestBox
+                         x:Name="DialNumberBox"
+-                        PlaceholderText="Num or search"
+                         FontSize="22"
+                         FontWeight="SemiBold"
+                         HorizontalAlignment="Stretch"
+-                        MaxWidth="300"
+                         ItemTemplate="{StaticResource ContactSearchSuggestionTemplate}"
+                         UpdateTextOnSelect="False"
+                         TextChanged="DialNumberBox_TextChanged"
+@@ -349,6 +359,7 @@
+                             </Style>
+                         </AutoSuggestBox.TextBoxStyle>
+                     </AutoSuggestBox>
++                    </Grid>
+ 
+                     <Button
+                         x:Name="ContactsButton"
+diff --git a/src/Sefirah/Views/CallsPage.xaml.cs b/src/Sefirah/Views/CallsPage.xaml.cs
+index 38c385d..ceb26bf 100644
+--- a/src/Sefirah/Views/CallsPage.xaml.cs
++++ b/src/Sefirah/Views/CallsPage.xaml.cs
+@@ -25,6 +25,7 @@ public sealed partial class CallsPage : Page
+             HookWindowKeys(true);
+             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+             DialNumberBox.Text = ViewModel.PhoneNumber;
++            DialNumberHint.Visibility = string.IsNullOrEmpty(DialNumberBox.Text) ? Visibility.Visible : Visibility.Collapsed;
+             ViewModel.ExternalDialPrepared += OnExternalDialPrepared;
+             OnExternalDialPrepared(this, EventArgs.Empty);
+         };
+@@ -169,6 +170,8 @@ public sealed partial class CallsPage : Page
+ 
+     private void DialNumberBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+     {
++        DialNumberHint.Visibility = string.IsNullOrEmpty(sender.Text) ? Visibility.Visible : Visibility.Collapsed;
++
+         if (args.Reason is not AutoSuggestionBoxTextChangeReason.UserInput)
+             return;
+ 
+diff --git a/src/Sefirah/Views/Settings/GeneralPage.xaml b/src/Sefirah/Views/Settings/GeneralPage.xaml
+index 3fd1d78..2a77e3a 100644
+--- a/src/Sefirah/Views/Settings/GeneralPage.xaml
++++ b/src/Sefirah/Views/Settings/GeneralPage.xaml
+@@ -69,6 +69,14 @@
+                     <ToggleSwitch IsOn="{x:Bind ViewModel.AutoDialTelLinks, Mode=TwoWay}" />
+                 </wuc:SettingsCard>
+ 
++                <!--  Call history export -->
++                <wuc:SettingsCard Description="{x:Bind ViewModel.CallLogExportFolder}" Header="Export call history (call-log.json / .csv)">
++                    <wuc:SettingsCard.HeaderIcon>
++                        <FontIcon Glyph="&#xEDE1;" />
++                    </wuc:SettingsCard.HeaderIcon>
++                    <ToggleSwitch IsOn="{x:Bind ViewModel.ExportCallLog, Mode=TwoWay}" />
++                </wuc:SettingsCard>
++
+                 <!--  Backdrop material -->
+                 <wuc:SettingsCard Header="{helpers:ResourceString Name=BackdropMaterial}">
+                     <wuc:SettingsCard.HeaderIcon>
