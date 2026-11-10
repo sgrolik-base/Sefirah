@@ -1,6 +1,7 @@
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Input;
 using Sefirah.Data.Models;
+using Sefirah.Utils;
 using Sefirah.ViewModels;
 using Windows.System;
 using Windows.UI.Core;
@@ -77,6 +78,17 @@ public sealed partial class CallsPage : Page
 
     private void Window_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Text boxes handle their own typing; only Enter in the number field dials.
+        if (e.OriginalSource is TextBox textBox)
+        {
+            if (textBox == DialNumberBox && e.Key is VirtualKey.Enter)
+            {
+                _ = ViewModel.DialAsync();
+                e.Handled = true;
+            }
+            return;
+        }
+
         if (e.Key is VirtualKey.Back)
         {
             ViewModel.RemoveLastDialDigitCommand.Execute(null);
@@ -124,6 +136,16 @@ public sealed partial class CallsPage : Page
         };
 
         return dialKey is not null;
+    }
+
+    private void DialNumberBox_TextChanging(TextBox sender, TextBoxTextChangingEventArgs args)
+    {
+        var cleaned = PhoneNumberUtils.CleanDialInput(sender.Text);
+        if (cleaned == sender.Text)
+            return;
+
+        sender.Text = cleaned;
+        sender.SelectionStart = cleaned.Length;
     }
 
     private async void DialButton_Click(object sender, RoutedEventArgs e)

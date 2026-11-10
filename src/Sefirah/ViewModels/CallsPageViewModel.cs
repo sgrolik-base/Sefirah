@@ -2,6 +2,7 @@ using CommunityToolkit.WinUI;
 using Sefirah.Data.AppDatabase.Repository;
 using Sefirah.Data.Models;
 using Sefirah.Dialogs;
+using Sefirah.Utils;
 
 namespace Sefirah.ViewModels;
 
@@ -222,7 +223,7 @@ public sealed partial class CallsPageViewModel : BaseViewModel
 
     public void ApplySearchQueryAsNumber(string? query)
     {
-        var q = query?.Trim();
+        var q = PhoneNumberUtils.CleanDialInput(query);
         if (string.IsNullOrEmpty(q)) return;
 
         ClearDialContactVisual();
@@ -243,7 +244,10 @@ public sealed partial class CallsPageViewModel : BaseViewModel
 
     public async Task DialAsync()
     {
-        await phoneLineService.DialAsync(PhoneNumber);
+        var number = PhoneNumberUtils.CleanDialInput(PhoneNumber);
+        if (string.IsNullOrEmpty(number)) return;
+
+        await phoneLineService.DialAsync(number);
     }
 
     public void ToggleSelectingCallLog(CallLog callLog)

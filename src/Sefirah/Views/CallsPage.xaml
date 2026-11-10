@@ -315,6 +315,19 @@
                 Visibility="{x:Bind ViewModel.ShowDialer, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
 
                 <StackPanel VerticalAlignment="Center" Spacing="12">
+                    <TextBox
+                        x:Name="DialNumberBox"
+                        Text="{x:Bind ViewModel.PhoneNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        PlaceholderText="+420 739 017 476"
+                        FontSize="22"
+                        FontWeight="SemiBold"
+                        TextAlignment="Center"
+                        HorizontalAlignment="Stretch"
+                        MaxWidth="300"
+                        InputScope="TelephoneNumber"
+                        IsSpellCheckEnabled="False"
+                        TextChanging="DialNumberBox_TextChanging" />
+
                     <Grid Width="68" Height="68" HorizontalAlignment="Center">
                         <controls:ContactAvatar
                             Width="68"
@@ -339,28 +352,6 @@
                         HorizontalAlignment="Center"
                         MaxWidth="300"
                         TextTrimming="CharacterEllipsis"
-                        Visibility="{x:Bind ViewModel.DialContact, Mode=OneWay, Converter={StaticResource EmptyObjectToVisibilityConverter}}" />
-
-                    <TextBlock
-                        Text="{x:Bind ViewModel.PhoneNumber, Mode=OneWay}"
-                        FontSize="22"
-                        FontWeight="SemiBold"
-                        TextAlignment="Center"
-                        HorizontalAlignment="Center"
-                        MinHeight="30"
-                        VerticalAlignment="Center"
-                        TextTrimming="CharacterEllipsis"
-                        MaxWidth="300"
-                        Visibility="{x:Bind ViewModel.DialContact, Mode=OneWay, Converter={StaticResource InverseEmptyObjectToVisibilityConverter}}" />
-
-                    <TextBlock
-                        Text="{x:Bind ViewModel.PhoneNumber, Mode=OneWay}"
-                        FontSize="14"
-                        TextAlignment="Center"
-                        HorizontalAlignment="Center"
-                        TextTrimming="CharacterEllipsis"
-                        MaxWidth="300"
-                        Foreground="{ThemeResource TextFillColorSecondary}"
                         Visibility="{x:Bind ViewModel.DialContact, Mode=OneWay, Converter={StaticResource EmptyObjectToVisibilityConverter}}" />
 
                     <Grid ColumnSpacing="10" RowSpacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">

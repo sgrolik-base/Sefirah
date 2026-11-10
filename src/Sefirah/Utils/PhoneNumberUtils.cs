@@ -77,6 +77,27 @@ public static partial class PhoneNumberUtils
             : trimmed;
     }
 
+    /// <summary>
+    /// Strips formatting from typed or pasted dial input, e.g. "+420 (739) 017 476" -> "+420739017476".
+    /// Keeps digits, '*', '#' and a leading '+'; drops a trunk "(0)" as in "+44 (0) 20 ...".
+    /// </summary>
+    public static string CleanDialInput(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var input = value.Replace("(0)", string.Empty);
+        var result = new System.Text.StringBuilder(input.Length);
+        foreach (var c in input)
+        {
+            if (char.IsAsciiDigit(c) || c is '*' or '#')
+                result.Append(c);
+            else if (c == '+' && result.Length == 0)
+                result.Append(c);
+        }
+        return result.ToString();
+    }
+
     private static bool LooksLikePhoneNumber(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
