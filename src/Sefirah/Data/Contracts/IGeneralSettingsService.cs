@@ -20,6 +20,11 @@ public interface IGeneralSettingsService : IBaseSettingsService, INotifyProperty
     bool AutoDialTelLinks { get; set; }
 
     /// <summary>
+    /// Gets or sets whether the call history is exported to Documents\Sefirah\call-log.json/.csv.
+    /// </summary>
+    bool ExportCallLog { get; set; }
+
+    /// <summary>
     /// Gets or sets the theme for the application.
     /// </summary>
     Theme Theme { get; set; }

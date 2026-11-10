@@ -146,6 +146,9 @@ public sealed partial class CallsPageViewModel : BaseViewModel
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+            if (!Ioc.Default.GetRequiredService<IUserSettingsService>().GeneralSettingsService.ExportCallLog)
+                return;
+
             var snapshot = CallLogs.ToList();
             var deviceName = ActiveDevice?.Name ?? string.Empty;
             await Task.Run(() => CallLogExporter.ExportAsync(deviceName, snapshot));

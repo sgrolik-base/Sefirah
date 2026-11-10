@@ -25,6 +25,7 @@ public sealed partial class CallsPage : Page
             HookWindowKeys(true);
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
             DialNumberBox.Text = ViewModel.PhoneNumber;
+            DialNumberHint.Visibility = string.IsNullOrEmpty(DialNumberBox.Text) ? Visibility.Visible : Visibility.Collapsed;
             ViewModel.ExternalDialPrepared += OnExternalDialPrepared;
             OnExternalDialPrepared(this, EventArgs.Empty);
         };
@@ -169,6 +170,8 @@ public sealed partial class CallsPage : Page
 
     private void DialNumberBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
+        DialNumberHint.Visibility = string.IsNullOrEmpty(sender.Text) ? Visibility.Visible : Visibility.Collapsed;
+
         if (args.Reason is not AutoSuggestionBoxTextChangeReason.UserInput)
             return;
 

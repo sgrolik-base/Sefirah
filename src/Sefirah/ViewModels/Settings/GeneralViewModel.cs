@@ -2,6 +2,7 @@ using CommunityToolkit.WinUI;
 using Sefirah.Data.AppDatabase.Models;
 using Sefirah.Data.Items;
 using Sefirah.Helpers;
+using Sefirah.Utils;
 
 namespace Sefirah.ViewModels.Settings;
 public sealed partial class GeneralViewModel : BaseViewModel
@@ -165,6 +166,21 @@ public sealed partial class GeneralViewModel : BaseViewModel
             }
         }
     }
+
+    public bool ExportCallLog
+    {
+        get => UserSettingsService.GeneralSettingsService.ExportCallLog;
+        set
+        {
+            if (value != UserSettingsService.GeneralSettingsService.ExportCallLog)
+            {
+                UserSettingsService.GeneralSettingsService.ExportCallLog = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string CallLogExportFolder => CallLogExporter.ExportFolder;
 
     private LocalDeviceEntity? localDevice;
 

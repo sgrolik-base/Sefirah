@@ -34,6 +34,12 @@ internal sealed partial class GeneralSettingsService : BaseObservableJsonSetting
         set => Set(value);
     }
 
+    public bool ExportCallLog
+    {
+        get => Get(true);
+        set => Set(value);
+    }
+
     public Theme Theme
     {
         get => Get(Theme.Default);

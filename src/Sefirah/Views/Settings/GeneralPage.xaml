@@ -69,6 +69,14 @@
                     <ToggleSwitch IsOn="{x:Bind ViewModel.AutoDialTelLinks, Mode=TwoWay}" />
                 </wuc:SettingsCard>
 
+                <!--  Call history export -->
+                <wuc:SettingsCard Description="{x:Bind ViewModel.CallLogExportFolder}" Header="Export call history (call-log.json / .csv)">
+                    <wuc:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xEDE1;" />
+                    </wuc:SettingsCard.HeaderIcon>
+                    <ToggleSwitch IsOn="{x:Bind ViewModel.ExportCallLog, Mode=TwoWay}" />
+                </wuc:SettingsCard>
+
                 <!--  Backdrop material -->
                 <wuc:SettingsCard Header="{helpers:ResourceString Name=BackdropMaterial}">
                     <wuc:SettingsCard.HeaderIcon>

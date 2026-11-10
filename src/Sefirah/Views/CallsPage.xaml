@@ -329,13 +329,23 @@
                 Visibility="{x:Bind ViewModel.ShowDialer, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
 
                 <StackPanel VerticalAlignment="Center" Spacing="12">
+                    <!-- Own centered hint: the built-in placeholder ignores TextAlignment. -->
+                    <Grid MaxWidth="300" HorizontalAlignment="Stretch">
+                    <TextBlock
+                        x:Name="DialNumberHint"
+                        Text="Num or search"
+                        FontSize="22"
+                        FontWeight="SemiBold"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        IsHitTestVisible="False"
+                        Canvas.ZIndex="1" />
                     <AutoSuggestBox
                         x:Name="DialNumberBox"
-                        PlaceholderText="Num or search"
                         FontSize="22"
                         FontWeight="SemiBold"
                         HorizontalAlignment="Stretch"
-                        MaxWidth="300"
                         ItemTemplate="{StaticResource ContactSearchSuggestionTemplate}"
                         UpdateTextOnSelect="False"
                         TextChanged="DialNumberBox_TextChanged"
@@ -349,6 +359,7 @@
                             </Style>
                         </AutoSuggestBox.TextBoxStyle>
                     </AutoSuggestBox>
+                    </Grid>
 
                     <Button
                         x:Name="ContactsButton"
