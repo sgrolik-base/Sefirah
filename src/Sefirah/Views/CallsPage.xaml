@@ -315,19 +315,66 @@
                 Visibility="{x:Bind ViewModel.ShowDialer, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
 
                 <StackPanel VerticalAlignment="Center" Spacing="12">
-                    <TextBox
+                    <AutoSuggestBox
                         x:Name="DialNumberBox"
-                        Text="{x:Bind ViewModel.PhoneNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                        PlaceholderText="Paste number"
+                        PlaceholderText="Paste number or search contacts"
                         FontSize="22"
                         FontWeight="SemiBold"
-                        TextAlignment="Center"
                         HorizontalAlignment="Stretch"
                         MaxWidth="300"
-                        InputScope="TelephoneNumber"
-                        IsSpellCheckEnabled="False"
-                        TextChanging="DialNumberBox_TextChanging" />
+                        ItemTemplate="{StaticResource ContactSearchSuggestionTemplate}"
+                        UpdateTextOnSelect="False"
+                        TextChanged="DialNumberBox_TextChanged"
+                        QuerySubmitted="DialNumberBox_QuerySubmitted">
+                        <AutoSuggestBox.TextBoxStyle>
+                            <Style TargetType="TextBox" BasedOn="{StaticResource AutoSuggestBoxTextBoxStyle}">
+                                <Setter Property="TextAlignment" Value="Center" />
+                                <Setter Property="IsSpellCheckEnabled" Value="False" />
+                            </Style>
+                        </AutoSuggestBox.TextBoxStyle>
+                    </AutoSuggestBox>
 
+                    <Button
+                        x:Name="ContactsButton"
+                        Width="68"
+                        Height="68"
+                        Padding="0"
+                        CornerRadius="34"
+                        HorizontalAlignment="Center"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        AutomationProperties.Name="Contacts"
+                        ToolTipService.ToolTip="Contacts">
+                        <Button.Flyout>
+                            <Flyout x:Name="ContactsFlyout" Placement="Bottom" Opening="ContactsFlyout_Opening">
+                                <Grid Width="300" Height="420" RowSpacing="8">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <TextBox
+                                        x:Name="ContactsFilterBox"
+                                        PlaceholderText="Search contacts"
+                                        IsSpellCheckEnabled="False"
+                                        TextChanged="ContactsFilterBox_TextChanged" />
+                                    <TextBlock
+                                        x:Name="NoContactsText"
+                                        Grid.Row="1"
+                                        Text="No contacts synced from the phone"
+                                        Opacity="0.7"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Visibility="Collapsed" />
+                                    <ListView
+                                        x:Name="ContactsList"
+                                        Grid.Row="1"
+                                        SelectionMode="None"
+                                        IsItemClickEnabled="True"
+                                        ItemTemplate="{StaticResource ContactSearchSuggestionTemplate}"
+                                        ItemClick="ContactsList_ItemClick" />
+                                </Grid>
+                            </Flyout>
+                        </Button.Flyout>
                     <Grid Width="68" Height="68" HorizontalAlignment="Center">
                         <controls:ContactAvatar
                             Width="68"
@@ -343,6 +390,7 @@
                             Initials="{x:Bind ViewModel.DialContact.Initials, Mode=OneWay}"
                             PlaceholderColorHex="{x:Bind ViewModel.DialContact.PlaceholderColorHex, Mode=OneWay}" />
                     </Grid>
+                    </Button>
 
                     <TextBlock
                         Text="{x:Bind ViewModel.DialContact.DisplayName, Mode=OneWay}"

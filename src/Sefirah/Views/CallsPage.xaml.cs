@@ -1,3 +1,4 @@
+using CommunityToolkit.WinUI;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Input;
 using Sefirah.Data.Models;
@@ -22,12 +23,15 @@ public sealed partial class CallsPage : Page
         {
             UpdatePaneLayout();
             HookWindowKeys(true);
+            ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+            DialNumberBox.Text = ViewModel.PhoneNumber;
             ViewModel.ExternalDialPrepared += OnExternalDialPrepared;
             OnExternalDialPrepared(this, EventArgs.Empty);
         };
         Unloaded += (_, _) =>
         {
             HookWindowKeys(false);
+            ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
             ViewModel.ExternalDialPrepared -= OnExternalDialPrepared;
         };
     }
@@ -90,16 +94,9 @@ public sealed partial class CallsPage : Page
 
     private void Window_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        // Text boxes handle their own typing; only Enter in the number field dials.
-        if (e.OriginalSource is TextBox textBox)
-        {
-            if (textBox == DialNumberBox && e.Key is VirtualKey.Enter)
-            {
-                _ = ViewModel.DialAsync();
-                e.Handled = true;
-            }
+        // Text boxes handle their own typing (Enter in the number box dials via QuerySubmitted).
+        if (e.OriginalSource is TextBox)
             return;
-        }
 
         if (e.Key is VirtualKey.Back)
         {
@@ -150,14 +147,93 @@ public sealed partial class CallsPage : Page
         return dialKey is not null;
     }
 
-    private void DialNumberBox_TextChanging(TextBox sender, TextBoxTextChangingEventArgs args)
+    // The number box shows either a number (kept in sync with ViewModel.PhoneNumber)
+    // or a name being searched (then PhoneNumber stays empty until a contact is picked).
+    private bool updatingNumberFromBox;
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        var cleaned = PhoneNumberUtils.CleanDialInput(sender.Text);
-        if (cleaned == sender.Text)
+        if (e.PropertyName == nameof(CallsPageViewModel.PhoneNumber) && !updatingNumberFromBox
+            && DialNumberBox.Text != ViewModel.PhoneNumber)
+        {
+            DialNumberBox.Text = ViewModel.PhoneNumber;
+        }
+    }
+
+    private void SetNumberFromBox(string number)
+    {
+        updatingNumberFromBox = true;
+        ViewModel.PhoneNumber = number;
+        updatingNumberFromBox = false;
+    }
+
+    private void DialNumberBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (args.Reason is not AutoSuggestionBoxTextChangeReason.UserInput)
             return;
 
-        sender.Text = cleaned;
-        sender.SelectionStart = cleaned.Length;
+        var text = sender.Text;
+        if (text.Any(char.IsLetter))
+        {
+            // Searching by name.
+            SetNumberFromBox(string.Empty);
+            sender.ItemsSource = ViewModel.SearchContacts(text);
+            return;
+        }
+
+        var cleaned = PhoneNumberUtils.CleanDialInput(text);
+        SetNumberFromBox(cleaned);
+        sender.ItemsSource = cleaned.Length >= 3 ? ViewModel.SearchContacts(cleaned) : null;
+
+        if (cleaned != text)
+        {
+            sender.Text = cleaned;
+            if (sender.FindDescendant<TextBox>() is { } inner)
+                inner.SelectionStart = cleaned.Length;
+        }
+    }
+
+    private async void DialNumberBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+    {
+        sender.ItemsSource = null;
+        if (args.ChosenSuggestion is Contact contact)
+        {
+            ViewModel.ApplyContactToDialer(contact);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(ViewModel.PhoneNumber))
+            await ViewModel.DialAsync();
+    }
+
+    private List<Contact> allContacts = [];
+
+    private void ContactsFlyout_Opening(object? sender, object e)
+    {
+        allContacts = ViewModel.GetAllContacts();
+        ContactsFilterBox.Text = string.Empty;
+        ShowContacts(allContacts);
+    }
+
+    private void ContactsFilterBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        var filter = ContactsFilterBox.Text.Trim();
+        ShowContacts(string.IsNullOrEmpty(filter) ? allContacts : ViewModel.SearchContacts(filter, take: 200));
+    }
+
+    private void ShowContacts(List<Contact> contacts)
+    {
+        ContactsList.ItemsSource = contacts;
+        NoContactsText.Visibility = contacts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ContactsList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not Contact contact)
+            return;
+
+        ViewModel.ApplyContactToDialer(contact);
+        ContactsFlyout.Hide();
     }
 
     private async void DialButton_Click(object sender, RoutedEventArgs e)

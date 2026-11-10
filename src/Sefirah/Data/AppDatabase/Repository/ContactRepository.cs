@@ -124,8 +124,10 @@ public class ContactRepository(DatabaseContext context, ILogger<ContactRepositor
         return null;
     }
 
-    private IEnumerable<Contact> GetContactsForDevice(string deviceId) =>
-        caches.TryGetValue(deviceId, out var cache) ? cache.Values.DistinctBy(c => c.ContactKey ?? c.Address) : [];
+    private IEnumerable<Contact> GetContactsForDevice(string deviceId, bool perNumber = false) =>
+        caches.TryGetValue(deviceId, out var cache)
+            ? cache.Values.DistinctBy(c => perNumber ? c.Address : c.ContactKey ?? c.Address)
+            : [];
 
     private IEnumerable<Contact> GetContactsFromOtherDevices(string deviceId) =>
         caches
@@ -133,13 +135,22 @@ public class ContactRepository(DatabaseContext context, ILogger<ContactRepositor
             .SelectMany(kvp => kvp.Value.Values)
             .DistinctBy(c => c.ContactKey ?? c.Address);
 
+    /// <summary>All contacts of a device, one entry per phone number, sorted by name.</summary>
+    public List<Contact> GetAllContacts(string deviceId) =>
+        [.. GetContactsForDevice(deviceId, perNumber: true).OrderBy(c => c.DisplayName)];
+
     private static List<Contact> FilterContacts(IEnumerable<Contact> contacts, string searchText)
     {
+        // "739 017" or "+420739..." should match "+420 739 017 476" regardless of formatting.
+        var digits = PhoneNumberUtils.CleanDialInput(searchText);
+        var matchDigits = digits.Length >= 3 && searchText.All(ch => !char.IsLetter(ch));
+
         return contacts
             .Where(c =>
                 (c.DisplayName?.Contains(searchText, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (!string.IsNullOrEmpty(c.Address) &&
-                 c.Address.Contains(searchText, StringComparison.OrdinalIgnoreCase)))
+                 (c.Address.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+                  (matchDigits && PhoneNumberUtils.CleanDialInput(c.Address).Contains(digits)))))
             .DistinctBy(c => c.ContactKey ?? c.Address)
             .OrderBy(c => c.DisplayName)
             .ToList();

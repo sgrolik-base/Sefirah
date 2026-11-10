@@ -210,11 +210,14 @@ public sealed partial class CallsPageViewModel : BaseViewModel
     }
 
 
-    public List<Contact> SearchContacts(string? searchText)
+    public List<Contact> SearchContacts(string? searchText, int take = 5)
     {
         if (string.IsNullOrWhiteSpace(searchText) || ActiveDevice is null) return [];
-        return contactRepository.SearchContacts(ActiveDevice.Id, searchText);
+        return contactRepository.SearchContacts(ActiveDevice.Id, searchText, take);
     }
+
+    public List<Contact> GetAllContacts() =>
+        ActiveDevice is null ? [] : contactRepository.GetAllContacts(ActiveDevice.Id);
 
     public void ApplyContactToDialer(Contact contact)
     {
