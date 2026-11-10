@@ -8,6 +8,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 Set-Location $repo
 
 if (git status --porcelain) { throw 'Working tree has uncommitted changes. Commit or stash them first.' }
+$source = (git branch --show-current).Trim()
 
 if (-not (git remote | Select-String -SimpleMatch 'upstream')) {
     git remote add upstream https://github.com/shrimqy/Sefirah
@@ -31,10 +32,15 @@ $overlap = $modFiles | Where-Object { $upstreamFiles -contains $_ }
 if ($overlap) { $overlap | ForEach-Object { Write-Host "  ! $_" -ForegroundColor Yellow } } else { Write-Host '  (none)' }
 Write-Host ''
 
+# mods/ does not exist in the upstream tree, so keep a copy of the patches before switching.
+$work = Join-Path ([IO.Path]::GetTempPath()) "sefirah-mods-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+New-Item -ItemType Directory $work | Out-Null
+Copy-Item "$PSScriptRoot\patches\*.patch" $work
+
 $branch = "update/upstream-$($target.Substring(0, 7))"
 git checkout -b $branch $target
 
-$patches = Get-ChildItem "$PSScriptRoot\patches\*.patch" | Sort-Object Name
+$patches = Get-ChildItem "$work\*.patch" | Sort-Object Name
 foreach ($p in $patches) {
     Write-Host "Applying $($p.Name) ..."
     git am -3 --keep-cr $p.FullName
@@ -47,6 +53,10 @@ foreach ($p in $patches) {
         exit 1
     }
 }
+
+# Bring the mods folder (docs, scripts, patches) onto the new branch too.
+git checkout $source -- mods
+git -c user.name=sgrolik-base -c user.email=s.grolik@baselinker.com commit -q -m "chore: carry mods folder onto upstream update"
 
 Write-Host ''
 Write-Host "All $($patches.Count) mods applied on branch $branch." -ForegroundColor Green
