@@ -1,8 +1,9 @@
 # Sefirah – vlastní mody (fork sgrolik-base/Sefirah)
 
 Tento fork je moje vlastní aplikace postavená na [shrimqy/Sefirah](https://github.com/shrimqy/Sefirah).
-Každá vlastní funkce je **mod** = jeden commit = jeden patch v `mods/patches/`. Díky tomu se dají
-po vydání nového Sefirah znovu nasadit jedním kliknutím.
+Každá vlastní funkce je **mod** = jeden commit na `master` od `mods/BASE`. Záložní kopie každého
+modu je patch v `mods/patches/`. Po vydání nového Sefirah se mody znovu nasadí jedním kliknutím
+(skript je přehraje na novou verzi přes `git rebase`).
 
 - **Základ (upstream commit):** viz `mods/BASE` (nyní `6db524a`, Sefirah 3.2.0).
 - **Změny dělat vždy jako PR** do tohoto forku (větev `feat/...` → `master`), nikdy rovnou na master.
@@ -13,17 +14,17 @@ po vydání nového Sefirah znovu nasadit jedním kliknutím.
 |---|---|
 | `mods/Update-From-Upstream.cmd` | Stáhne nejnovější oficiální Sefirah, vypíše co se tam změnilo a které soubory kolidují s mody, vytvoří větev `update/upstream-<sha>` a nasadí na ni všechny mody. Master nemění. Při konfliktu zastaví a řekne, který mod. |
 | `mods/Build-Install.cmd` | Sestaví aktuální větev (Release x64) a nainstaluje ji místo běžícího Sefirah (sideload, zachová párování a data, sám zvedne číslo verze). |
-| `mods/export-mods.ps1` | Po merge nového modu znovu vygeneruje `mods/patches/` z commitů od `BASE`. |
+| `mods/export-mods.ps1` | Po merge nového modu obnoví záložní patche v `mods/patches/`. |
 
 ### Postup, když vyjde nový Sefirah
 
-1. Dvojklik `mods/Update-From-Upstream.cmd`.
-2. Konflikt? Otevři mod v tabulce níže, oprav soubory, `git add …`, `git am --continue`, pak dokonči zbývající patche (skript vypíše příkaz).
-3. Dvojklik `mods/Build-Install.cmd` a projdi **Test** u každého modu.
-4. Pushni větev a otevři PR na `master`.
-5. Po merge: do `mods/BASE` zapiš nový upstream commit a spusť `mods/export-mods.ps1`. Commitni jako PR.
+1. Dvojklik `mods/Update-From-Upstream.cmd`. Vypíše mody, novinky v upstreamu a soubory, které mění obojí (tam hrozí konflikt).
+2. Konflikt? Skript zastaví u konkrétního modu. Otevři ho v tabulce níže, oprav soubory, `git add …`, `git rebase --continue`.
+3. Na konci skript sám zapíše nový `mods/BASE`.
+4. Dvojklik `mods/Build-Install.cmd` a projdi **Test** u každého modu.
+5. Pushni větev `update/upstream-<sha>` a otevři PR na `master`. Po merge spusť `mods/export-mods.ps1` (nové záložní patche) a dej to jako PR.
 
-Mody se nasazují **v pořadí 0001 → 0006**. Pozdější mody stavějí na dřívějších (hlavně `CallsPage.xaml(.cs)` a `CallsPageViewModel.cs`), takže je nevynechávej jednotlivě. Chování se vypíná v **Nastavení → General**, ne odebráním patche.
+Mody se nasazují **v pořadí 0001 → 0006** (pořadí commitů). Pozdější mody stavějí na dřívějších (hlavně `CallsPage.xaml(.cs)` a `CallsPageViewModel.cs`), takže je nevynechávej jednotlivě. Chování se vypíná v **Nastavení → General**, ne odebráním patche.
 
 ## Seznam modů
 
