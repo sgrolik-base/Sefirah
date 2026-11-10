@@ -21,7 +21,19 @@ public sealed partial class MessagesPage : Page
         InitializeComponent();
         ViewModel = Ioc.Default.GetRequiredService<MessagesViewModel>();
         DataContext = ViewModel;
-        Loaded += (_, _) => UpdatePaneLayout();
+        Loaded += (_, _) =>
+        {
+            UpdatePaneLayout();
+            ViewModel.ExternalDraftPrepared += OnExternalDraftPrepared;
+            OnExternalDraftPrepared(this, EventArgs.Empty);
+        };
+        Unloaded += (_, _) => ViewModel.ExternalDraftPrepared -= OnExternalDraftPrepared;
+    }
+
+    private void OnExternalDraftPrepared(object? sender, EventArgs e)
+    {
+        if (ViewModel.ConsumeExternalDraftPending())
+            ShowConversationDetail();
     }
 
     private ScrollViewer? messagesScrollViewer;

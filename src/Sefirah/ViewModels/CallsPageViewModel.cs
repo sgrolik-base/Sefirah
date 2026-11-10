@@ -47,13 +47,13 @@ public sealed partial class CallsPageViewModel : BaseViewModel
 
     partial void OnPhoneNumberChanged(string oldValue, string newValue)
     {
-        if (string.IsNullOrEmpty(newValue))
+        if (string.IsNullOrEmpty(newValue) || ActiveDevice is null)
         {
             DialContact = null;
             return;
         }
-        
-        DialContact = contactRepository.LookupContact(ActiveDevice!.Id, newValue);
+
+        DialContact = contactRepository.LookupContact(ActiveDevice.Id, newValue);
     }
 
     [ObservableProperty]
@@ -228,6 +228,24 @@ public sealed partial class CallsPageViewModel : BaseViewModel
 
         ClearDialContactVisual();
         PhoneNumber = q;
+    }
+
+    /// <summary>Raised when a tel: link prefilled the dialer, so the page can show it in narrow layout.</summary>
+    public event EventHandler? ExternalDialPrepared;
+    private bool externalDialPending;
+
+    public void PrepareExternalDial(string number)
+    {
+        ApplySearchQueryAsNumber(number);
+        externalDialPending = true;
+        ExternalDialPrepared?.Invoke(this, EventArgs.Empty);
+    }
+
+    public bool ConsumeExternalDialPending()
+    {
+        var pending = externalDialPending;
+        externalDialPending = false;
+        return pending;
     }
 
     public async Task RetryCallingSetupAsync()

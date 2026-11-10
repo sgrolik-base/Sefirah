@@ -22,8 +22,20 @@ public sealed partial class CallsPage : Page
         {
             UpdatePaneLayout();
             HookWindowKeys(true);
+            ViewModel.ExternalDialPrepared += OnExternalDialPrepared;
+            OnExternalDialPrepared(this, EventArgs.Empty);
         };
-        Unloaded += (_, _) => HookWindowKeys(false);
+        Unloaded += (_, _) =>
+        {
+            HookWindowKeys(false);
+            ViewModel.ExternalDialPrepared -= OnExternalDialPrepared;
+        };
+    }
+
+    private void OnExternalDialPrepared(object? sender, EventArgs e)
+    {
+        if (ViewModel.ConsumeExternalDialPending())
+            ShowDialer();
     }
 
     private const double TwoPaneMinWidth = 900;

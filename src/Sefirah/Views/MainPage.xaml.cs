@@ -135,6 +135,9 @@ public sealed partial class MainPage : Page
             : "Settings";
 
         NavigateToPage(page);
+
+        // A tel:/sms: link that arrived before the main page existed (cold start).
+        App.TryApplyPendingExternalLink();
     }
 
     private void NavigationView_SelectionChanged(NavigationView _, NavigationViewSelectionChangedEventArgs args)

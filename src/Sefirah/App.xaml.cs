@@ -2,6 +2,8 @@ using CommunityToolkit.WinUI;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.Windows.AppLifecycle;
 using Sefirah.Helpers;
+using Sefirah.Utils;
+using Sefirah.ViewModels;
 using Sefirah.Views;
 using Sefirah.Views.Onboarding;
 using Windows.ApplicationModel.Activation;
@@ -179,9 +181,17 @@ public partial class App : Application
         await MainWindow.DispatcherQueue.EnqueueAsync(() => InitializeApplicationAsync(activatedEventArgs));
     }
 
-    /// <summary>Parses sefirah://&lt;package&gt; and launches scrcpy for that package.</summary>
+    /// <summary>Handles tel:/sms: links, otherwise parses sefirah://&lt;package&gt; and launches scrcpy for that package.</summary>
     private static async void HandleProtocolActivationArgs(ProtocolActivatedEventArgs protocolArgs)
     {
+        var link = ExternalLinkParser.Parse(protocolArgs.Uri.OriginalString);
+        if (link is not null)
+        {
+            PendingExternalLink = link;
+            TryApplyPendingExternalLink();
+            return;
+        }
+
         var package = protocolArgs.Uri.Host;
         if (string.IsNullOrEmpty(package)) return;
         var screenMirror = Ioc.Default.GetRequiredService<IScreenMirrorService>();
@@ -195,6 +205,8 @@ public partial class App : Application
             switch (activatedEventArgs.Data)
             {
                 case ProtocolActivatedEventArgs protocolArgs:
+                    if (ExternalLinkParser.Parse(protocolArgs.Uri.OriginalString) is not null)
+                        ShowMainWindow();
                     HandleProtocolActivationArgs(protocolArgs);
                     break;
                 case ShareTargetActivatedEventArgs shareArgs:
@@ -217,6 +229,30 @@ public partial class App : Application
     }
 
 #endif
+
+    /// <summary>tel:/sms: link waiting until the main page exists. Kept in memory only.</summary>
+    private static ExternalLink? PendingExternalLink;
+
+    /// <summary>Prefills the dialer or a new SMS draft from a pending link. Never calls or sends.</summary>
+    public static void TryApplyPendingExternalLink()
+    {
+        if (PendingExternalLink is not { } link)
+            return;
+        if (MainWindow?.Content is not Frame { Content: MainPage mainPage })
+            return;
+
+        PendingExternalLink = null;
+        if (link.IsSms)
+        {
+            Ioc.Default.GetRequiredService<MessagesViewModel>().PrepareExternalDraft(link.Numbers, link.Body);
+            mainPage.NavigateToPage("Messages");
+        }
+        else
+        {
+            Ioc.Default.GetRequiredService<CallsPageViewModel>().PrepareExternalDial(link.Numbers[0]);
+            mainPage.NavigateToPage("Calls");
+        }
+    }
 
     private void HookEventsForWindow()
     {

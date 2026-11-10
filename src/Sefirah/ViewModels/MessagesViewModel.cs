@@ -601,6 +601,27 @@ public sealed partial class MessagesViewModel : BaseViewModel
         StagedAttachments.Clear();
     }
 
+    /// <summary>Raised when an sms: link prefilled a new draft, so the page can show it in narrow layout.</summary>
+    public event EventHandler? ExternalDraftPrepared;
+    private bool externalDraftPending;
+
+    public void PrepareExternalDraft(IReadOnlyList<string> numbers, string? body)
+    {
+        StartNewConversation();
+        foreach (var number in numbers)
+            AddAddress(contactRepository.GetContact(ActiveDevice?.Id, number));
+        MessageText = body ?? string.Empty;
+        externalDraftPending = true;
+        ExternalDraftPrepared?.Invoke(this, EventArgs.Empty);
+    }
+
+    public bool ConsumeExternalDraftPending()
+    {
+        var pending = externalDraftPending;
+        externalDraftPending = false;
+        return pending;
+    }
+
     public void AddAddress(Contact contact)
     {
         NewConversationRecipients.Add(contact);
