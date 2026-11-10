@@ -1,0 +1,435 @@
+From 69a3b4f2b43b6794580f8e4a9a8f2d361cb78466 Mon Sep 17 00:00:00 2001
+From: sgrolik-base <s.grolik@baselinker.com>
+Date: Tue, 10 Nov 2026 17:26:28 +0100
+Subject: [PATCH 5/6] feat(calls): colored call outcomes, call-log export,
+ faster contact pick
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Call history shows a phone icon + direction arrow colored by outcome:
+  green = connected (answered, duration > 0), red = not connected /
+  missed / rejected, amber = voicemail, gray = blocked/unknown
+- CallLog.Outcome / IsConnected; 'Outgoing · not connected' label
+- Export call history to Documents\\Sefirah\\call-log.json and .csv
+  (outcome, connected, duration, number, contact) 2 s after changes,
+  written atomically, for external stats automation
+- Number box hint 'Num or search'; Enter/Tab take the highlighted or
+  first matching contact, arrow keys select the highlighted contact
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/Sefirah/Data/Models/CallLog.cs           |  37 +++++-
+ src/Sefirah/Helpers/CallStatusHelper.cs      |  29 +++++
+ src/Sefirah/Utils/CallLogExporter.cs         | 120 +++++++++++++++++++
+ src/Sefirah/ViewModels/CallsPageViewModel.cs |  26 ++++
+ src/Sefirah/Views/CallsPage.xaml             |  28 ++++-
+ src/Sefirah/Views/CallsPage.xaml.cs          |  62 +++++++++-
+ 6 files changed, 292 insertions(+), 10 deletions(-)
+ create mode 100644 src/Sefirah/Helpers/CallStatusHelper.cs
+ create mode 100644 src/Sefirah/Utils/CallLogExporter.cs
+
+diff --git a/src/Sefirah/Data/Models/CallLog.cs b/src/Sefirah/Data/Models/CallLog.cs
+index 609dcdf..2326cc9 100644
+--- a/src/Sefirah/Data/Models/CallLog.cs
++++ b/src/Sefirah/Data/Models/CallLog.cs
+@@ -51,5 +51,40 @@ public partial class CallLog(Contact callContact) : ObservableObject
+         }
+     }
+ 
+-    public string CallTypeAndDuration => string.IsNullOrWhiteSpace(FormattedDuration) ? $"{CallType}" : $"{CallType} · {FormattedDuration}";
++    public string CallTypeAndDuration => Outcome switch
++    {
++        CallOutcome.Connected => $"{CallType} · {FormattedDuration}",
++        CallOutcome.NotConnected => $"{CallType} · not connected",
++        _ => $"{CallType}"
++    };
++
++    public bool IsOutgoing => CallType is CallLogType.Outgoing;
++
++    /// <summary>A call counts as connected when it was answered and lasted more than 0 seconds.</summary>
++    public bool IsConnected => Outcome is CallOutcome.Connected;
++
++    public CallOutcome Outcome => CallType switch
++    {
++        CallLogType.Incoming or CallLogType.Outgoing or CallLogType.AnsweredExternally
++            => DurationSeconds > 0 ? CallOutcome.Connected : CallOutcome.NotConnected,
++        CallLogType.Missed => CallOutcome.Missed,
++        CallLogType.Rejected => CallOutcome.Rejected,
++        CallLogType.Blocked => CallOutcome.Blocked,
++        CallLogType.Voicemail => CallOutcome.Voicemail,
++        _ => CallOutcome.Unknown
++    };
++
++    /// <summary>↗ outgoing, ↙ incoming/missed/rejected.</summary>
++    public string DirectionArrow => IsOutgoing ? "↗" : "↙";
++}
++
++public enum CallOutcome
++{
++    Connected,
++    NotConnected,
++    Missed,
++    Rejected,
++    Blocked,
++    Voicemail,
++    Unknown
+ }
+diff --git a/src/Sefirah/Helpers/CallStatusHelper.cs b/src/Sefirah/Helpers/CallStatusHelper.cs
+new file mode 100644
+index 0000000..65ea7fd
+--- /dev/null
++++ b/src/Sefirah/Helpers/CallStatusHelper.cs
+@@ -0,0 +1,29 @@
++using Microsoft.UI.Xaml.Media;
++using Sefirah.Data.Models;
++using Windows.UI;
++
++namespace Sefirah.Helpers;
++
++/// <summary>Colors for call-log status icons (used from x:Bind on the UI thread).</summary>
++public static class CallStatusHelper
++{
++    private static readonly Dictionary<CallOutcome, SolidColorBrush> Brushes = [];
++
++    public static SolidColorBrush StatusBrush(CallOutcome outcome)
++    {
++        if (Brushes.TryGetValue(outcome, out var brush))
++            return brush;
++
++        var color = outcome switch
++        {
++            CallOutcome.Connected => Color.FromArgb(255, 0x3F, 0xB9, 0x50),    // green
++            CallOutcome.Voicemail => Color.FromArgb(255, 0xD2, 0x99, 0x22),    // amber
++            CallOutcome.Blocked or CallOutcome.Unknown => Color.FromArgb(255, 0x8B, 0x8B, 0x8B), // gray
++            _ => Color.FromArgb(255, 0xE5, 0x53, 0x4B)                         // red: not connected, missed, rejected
++        };
++
++        brush = new SolidColorBrush(color);
++        Brushes[outcome] = brush;
++        return brush;
++    }
++}
+diff --git a/src/Sefirah/Utils/CallLogExporter.cs b/src/Sefirah/Utils/CallLogExporter.cs
+new file mode 100644
+index 0000000..c1c8c6e
+--- /dev/null
++++ b/src/Sefirah/Utils/CallLogExporter.cs
+@@ -0,0 +1,120 @@
++using System.Globalization;
++using System.Text;
++using Sefirah.Data.Models;
++
++namespace Sefirah.Utils;
++
++/// <summary>
++/// Writes the call history to Documents\Sefirah\call-log.json and call-log.csv so outside
++/// automations (e.g. a GitHub stats job) can count connected / not connected calls.
++/// Files are replaced atomically; the export never touches the app database.
++/// </summary>
++public static class CallLogExporter
++{
++    public static string ExportFolder { get; } =
++        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Sefirah");
++
++    private static readonly SemaphoreSlim Gate = new(1, 1);
++
++    public static async Task ExportAsync(string deviceName, IReadOnlyList<CallLog> logs)
++    {
++        await Gate.WaitAsync().ConfigureAwait(false);
++        try
++        {
++            Directory.CreateDirectory(ExportFolder);
++            var rows = logs
++                .OrderByDescending(l => l.TimestampMillis)
++                .Select(l => new CallLogExportRow(
++                    l.CallLogId,
++                    l.LocalTimestamp.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
++                    l.IsOutgoing ? "outgoing" : "incoming",
++                    l.CallType.ToString(),
++                    ToSnake(l.Outcome),
++                    l.IsConnected,
++                    l.DurationSeconds,
++                    PhoneNumberUtils.CleanDialInput(l.CallContact.Address),
++                    l.CallContact.DisplayName))
++                .ToList();
++
++            var export = new CallLogExport(
++                DateTimeOffset.Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
++                deviceName,
++                rows.Count,
++                rows.Count(r => r.Connected),
++                rows.Count(r => !r.Connected),
++                rows);
++
++            var json = JsonSerializer.Serialize(export, JsonOptions);
++            await WriteAtomicAsync(Path.Combine(ExportFolder, "call-log.json"), json).ConfigureAwait(false);
++            await WriteAtomicAsync(Path.Combine(ExportFolder, "call-log.csv"), ToCsv(rows)).ConfigureAwait(false);
++        }
++        finally
++        {
++            Gate.Release();
++        }
++    }
++
++    private static readonly JsonSerializerOptions JsonOptions = new()
++    {
++        WriteIndented = true,
++        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
++        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()
++    };
++
++    private static string ToSnake(CallOutcome outcome) => outcome switch
++    {
++        CallOutcome.NotConnected => "not_connected",
++        _ => outcome.ToString().ToLowerInvariant()
++    };
++
++    private static string ToCsv(List<CallLogExportRow> rows)
++    {
++        var sb = new StringBuilder();
++        sb.AppendLine("call_log_id,timestamp,direction,call_type,outcome,connected,duration_seconds,number,contact_name");
++        foreach (var r in rows)
++        {
++            sb.Append(r.CallLogId).Append(',')
++              .Append(r.Timestamp).Append(',')
++              .Append(r.Direction).Append(',')
++              .Append(r.CallType).Append(',')
++              .Append(r.Outcome).Append(',')
++              .Append(r.Connected ? "true" : "false").Append(',')
++              .Append(r.DurationSeconds).Append(',')
++              .Append(Csv(r.Number)).Append(',')
++              .Append(Csv(r.ContactName)).AppendLine();
++        }
++        return sb.ToString();
++    }
++
++    private static string Csv(string? value)
++    {
++        value ??= string.Empty;
++        return value.IndexOfAny([',', '"', '\n', '\r']) >= 0 ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
++    }
++
++    private static async Task WriteAtomicAsync(string path, string content)
++    {
++        var temp = path + ".tmp";
++        await File.WriteAllTextAsync(temp, content, new UTF8Encoding(true)).ConfigureAwait(false);
++        File.Move(temp, path, overwrite: true);
++    }
++
++    private sealed record CallLogExport(
++        string ExportedAt,
++        string Device,
++        int TotalCalls,
++        int ConnectedCalls,
++        int NotConnectedCalls,
++        List<CallLogExportRow> Calls);
++
++    private sealed record CallLogExportRow(
++        long CallLogId,
++        string Timestamp,
++        string Direction,
++        string CallType,
++        string Outcome,
++        bool Connected,
++        long DurationSeconds,
++        string Number,
++        string? ContactName);
++}
+diff --git a/src/Sefirah/ViewModels/CallsPageViewModel.cs b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+index 4142d4c..833e72f 100644
+--- a/src/Sefirah/ViewModels/CallsPageViewModel.cs
++++ b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+@@ -124,16 +124,41 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+                 var existingIndex = CallLogs.IndexOf(existing);
+                 CallLogs.RemoveAt(existingIndex);
+                 InsertOrdered(callLog);
++                ScheduleCallLogExport();
+                 return;
+             }
+ 
+             InsertOrdered(callLog);
++            ScheduleCallLogExport();
+ 
+             OnPropertyChanged(nameof(ShowCallLogEmpty));
+             OnPropertyChanged(nameof(ShowCallLogList));
+         });
+     }
+ 
++    private CancellationTokenSource? exportDelay;
++
++    /// <summary>Exports the call history a moment after the last change (call-log syncs arrive in bursts).</summary>
++    private async void ScheduleCallLogExport()
++    {
++        exportDelay?.Cancel();
++        var cts = exportDelay = new CancellationTokenSource();
++        try
++        {
++            await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
++            var snapshot = CallLogs.ToList();
++            var deviceName = ActiveDevice?.Name ?? string.Empty;
++            await Task.Run(() => CallLogExporter.ExportAsync(deviceName, snapshot));
++        }
++        catch (OperationCanceledException)
++        {
++        }
++        catch (Exception ex)
++        {
++            Logger.Warn("Call log export failed", ex);
++        }
++    }
++
+     private async void LoadCallLogs()
+     {
+         SelectedCallLog = null;
+@@ -149,6 +174,7 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+             var logs = await callLogRepository.GetCallLogsAsync(ActiveDevice.Id);
+             CallLogs.Clear();
+             CallLogs.AddRange(logs);
++            ScheduleCallLogExport();
+         }
+         finally
+         {
+diff --git a/src/Sefirah/Views/CallsPage.xaml b/src/Sefirah/Views/CallsPage.xaml
+index f50656f..439e345 100644
+--- a/src/Sefirah/Views/CallsPage.xaml
++++ b/src/Sefirah/Views/CallsPage.xaml
+@@ -145,11 +145,25 @@
+ 
+                                 <StackPanel Grid.Column="1" Spacing="2">
+                                     <TextBlock Text="{x:Bind CallContact.DisplayName, Mode=OneWay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+-                                    <TextBlock
+-                                        FontSize="12"
+-                                        Opacity="0.7"
+-                                        Text="{x:Bind CallTypeAndDuration, Mode=OneWay}"
+-                                        TextTrimming="CharacterEllipsis" />
++                                    <StackPanel Orientation="Horizontal" Spacing="4">
++                                        <FontIcon
++                                            Glyph="&#xE717;"
++                                            FontSize="12"
++                                            VerticalAlignment="Center"
++                                            Foreground="{x:Bind helpers:CallStatusHelper.StatusBrush(Outcome)}" />
++                                        <TextBlock
++                                            FontSize="12"
++                                            FontWeight="Bold"
++                                            VerticalAlignment="Center"
++                                            Text="{x:Bind DirectionArrow}"
++                                            Foreground="{x:Bind helpers:CallStatusHelper.StatusBrush(Outcome)}" />
++                                        <TextBlock
++                                            FontSize="12"
++                                            VerticalAlignment="Center"
++                                            Text="{x:Bind CallTypeAndDuration, Mode=OneWay}"
++                                            Foreground="{x:Bind helpers:CallStatusHelper.StatusBrush(Outcome)}"
++                                            TextTrimming="CharacterEllipsis" />
++                                    </StackPanel>
+                                 </StackPanel>
+                                 <StackPanel
+                                     Grid.Column="2"
+@@ -317,7 +331,7 @@
+                 <StackPanel VerticalAlignment="Center" Spacing="12">
+                     <AutoSuggestBox
+                         x:Name="DialNumberBox"
+-                        PlaceholderText="Paste number or search contacts"
++                        PlaceholderText="Num or search"
+                         FontSize="22"
+                         FontWeight="SemiBold"
+                         HorizontalAlignment="Stretch"
+@@ -325,6 +339,8 @@
+                         ItemTemplate="{StaticResource ContactSearchSuggestionTemplate}"
+                         UpdateTextOnSelect="False"
+                         TextChanged="DialNumberBox_TextChanged"
++                        SuggestionChosen="DialNumberBox_SuggestionChosen"
++                        PreviewKeyDown="DialNumberBox_PreviewKeyDown"
+                         QuerySubmitted="DialNumberBox_QuerySubmitted">
+                         <AutoSuggestBox.TextBoxStyle>
+                             <Style TargetType="TextBox" BasedOn="{StaticResource AutoSuggestBoxTextBoxStyle}">
+diff --git a/src/Sefirah/Views/CallsPage.xaml.cs b/src/Sefirah/Views/CallsPage.xaml.cs
+index c6b419b..38c385d 100644
+--- a/src/Sefirah/Views/CallsPage.xaml.cs
++++ b/src/Sefirah/Views/CallsPage.xaml.cs
+@@ -172,6 +172,7 @@ public sealed partial class CallsPage : Page
+         if (args.Reason is not AutoSuggestionBoxTextChangeReason.UserInput)
+             return;
+ 
++        highlightedContact = null;
+         var text = sender.Text;
+         if (text.Any(char.IsLetter))
+         {
+@@ -193,19 +194,74 @@ public sealed partial class CallsPage : Page
+         }
+     }
+ 
++    // Contact highlighted with the arrow keys; it is applied right away (without rewriting the search text).
++    private Contact? highlightedContact;
++
++    private void DialNumberBox_SuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
++    {
++        if (args.SelectedItem is not Contact contact)
++            return;
++
++        highlightedContact = contact;
++        updatingNumberFromBox = true;
++        ViewModel.ApplyContactToDialer(contact);
++        updatingNumberFromBox = false;
++    }
++
++    /// <summary>
++    /// The contact Enter/Tab should take: the highlighted one, otherwise the first suggestion
++    /// when searching by name or by a partial number. A full typed number is dialed as typed.
++    /// </summary>
++    private Contact? PickSuggestion(AutoSuggestBox box)
++    {
++        if (highlightedContact is not null)
++            return highlightedContact;
++
++        if (box.ItemsSource is not List<Contact> { Count: > 0 } suggestions)
++            return null;
++
++        var text = box.Text;
++        var digits = PhoneNumberUtils.CleanDialInput(text);
++        var isPartialNumber = !text.Any(char.IsLetter) && digits.TrimStart('+').Length < 9;
++        return text.Any(char.IsLetter) || isPartialNumber ? suggestions[0] : null;
++    }
++
++    private void ApplySuggestion(AutoSuggestBox box, Contact contact)
++    {
++        box.ItemsSource = null;
++        highlightedContact = null;
++        ViewModel.ApplyContactToDialer(contact);
++        if (box.Text != ViewModel.PhoneNumber)
++            box.Text = ViewModel.PhoneNumber;
++    }
++
+     private async void DialNumberBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+     {
+-        sender.ItemsSource = null;
+-        if (args.ChosenSuggestion is Contact contact)
++        var contact = args.ChosenSuggestion as Contact ?? PickSuggestion(sender);
++        if (contact is not null)
+         {
+-            ViewModel.ApplyContactToDialer(contact);
++            // First Enter fills the contact; the next Enter dials it.
++            ApplySuggestion(sender, contact);
+             return;
+         }
+ 
++        sender.ItemsSource = null;
+         if (!string.IsNullOrEmpty(ViewModel.PhoneNumber))
+             await ViewModel.DialAsync();
+     }
+ 
++    private void DialNumberBox_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
++    {
++        if (e.Key is not VirtualKey.Tab || sender is not AutoSuggestBox box)
++            return;
++
++        if (PickSuggestion(box) is { } contact)
++        {
++            ApplySuggestion(box, contact);
++            e.Handled = true;
++        }
++    }
++
+     private List<Contact> allContacts = [];
+ 
+     private void ContactsFlyout_Opening(object? sender, object e)

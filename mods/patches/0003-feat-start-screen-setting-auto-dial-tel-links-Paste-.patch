@@ -1,0 +1,289 @@
+From 5eb5e33bcd0dddf0ca7e4a17207e6ef3e58f8066 Mon Sep 17 00:00:00 2001
+From: sgrolik-base <s.grolik@baselinker.com>
+Date: Tue, 10 Nov 2026 17:06:40 +0100
+Subject: [PATCH 3/6] feat: start screen setting, auto-dial tel: links, 'Paste
+ number' hint
+
+- Settings > General > Start screen: last used, Calls dialer, Calls
+  history, Messages or Apps
+- Settings > General > Dial phone links immediately (on by default):
+  a tel: link starts the call; on cold start it waits up to 60 s for
+  the Bluetooth line and only dials if the number is unchanged
+- Dialer number field placeholder is now 'Paste number'
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/Sefirah/App.xaml.cs                       |  3 +-
+ .../Data/Contracts/IGeneralSettingsService.cs | 10 +++++
+ src/Sefirah/Data/Enums/Preferences.cs         | 10 +++++
+ .../Settings/GeneralSettingsService.cs        | 12 ++++++
+ src/Sefirah/ViewModels/CallsPageViewModel.cs  | 38 ++++++++++++++++++-
+ .../ViewModels/Settings/GeneralViewModel.cs   | 34 +++++++++++++++++
+ src/Sefirah/Views/CallsPage.xaml              |  2 +-
+ src/Sefirah/Views/MainPage.xaml.cs            | 12 +++++-
+ src/Sefirah/Views/Settings/GeneralPage.xaml   | 19 ++++++++++
+ 9 files changed, 136 insertions(+), 4 deletions(-)
+
+diff --git a/src/Sefirah/App.xaml.cs b/src/Sefirah/App.xaml.cs
+index 4ec0e3e..3f0f219 100644
+--- a/src/Sefirah/App.xaml.cs
++++ b/src/Sefirah/App.xaml.cs
+@@ -249,7 +249,8 @@ public partial class App : Application
+         }
+         else
+         {
+-            Ioc.Default.GetRequiredService<CallsPageViewModel>().PrepareExternalDial(link.Numbers[0]);
++            var dialImmediately = Ioc.Default.GetRequiredService<IUserSettingsService>().GeneralSettingsService.AutoDialTelLinks;
++            Ioc.Default.GetRequiredService<CallsPageViewModel>().PrepareExternalDial(link.Numbers[0], dialImmediately);
+             mainPage.NavigateToPage("Calls");
+         }
+     }
+diff --git a/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs b/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs
+index f9f4ee6..8b98331 100644
+--- a/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs
++++ b/src/Sefirah/Data/Contracts/IGeneralSettingsService.cs
+@@ -9,6 +9,16 @@ public interface IGeneralSettingsService : IBaseSettingsService, INotifyProperty
+     /// </summary>
+     StartupOptions StartupOption { get; set; }
+ 
++    /// <summary>
++    /// Gets or sets the screen shown when the main window opens.
++    /// </summary>
++    StartScreen StartScreen { get; set; }
++
++    /// <summary>
++    /// Gets or sets whether a tel: link starts the call right away instead of only filling the dialer.
++    /// </summary>
++    bool AutoDialTelLinks { get; set; }
++
+     /// <summary>
+     /// Gets or sets the theme for the application.
+     /// </summary>
+diff --git a/src/Sefirah/Data/Enums/Preferences.cs b/src/Sefirah/Data/Enums/Preferences.cs
+index 80b179b..52b12cd 100644
+--- a/src/Sefirah/Data/Enums/Preferences.cs
++++ b/src/Sefirah/Data/Enums/Preferences.cs
+@@ -15,6 +15,16 @@ public enum StartupOptions
+     Maximized
+ }
+ 
++/// <summary>Screen shown when the main window opens.</summary>
++public enum StartScreen
++{
++    LastUsed,
++    CallsDialer,
++    CallsHistory,
++    Messages,
++    Apps
++}
++
+ public enum NotificationFilter
+ {
+     Disabled,
+diff --git a/src/Sefirah/Services/Settings/GeneralSettingsService.cs b/src/Sefirah/Services/Settings/GeneralSettingsService.cs
+index 9cf98fd..73c7c9f 100644
+--- a/src/Sefirah/Services/Settings/GeneralSettingsService.cs
++++ b/src/Sefirah/Services/Settings/GeneralSettingsService.cs
+@@ -22,6 +22,18 @@ internal sealed partial class GeneralSettingsService : BaseObservableJsonSetting
+         set => Set(value);
+     }
+ 
++    public StartScreen StartScreen
++    {
++        get => Get(StartScreen.LastUsed);
++        set => Set(value);
++    }
++
++    public bool AutoDialTelLinks
++    {
++        get => Get(true);
++        set => Set(value);
++    }
++
+     public Theme Theme
+     {
+         get => Get(Theme.Default);
+diff --git a/src/Sefirah/ViewModels/CallsPageViewModel.cs b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+index 3b4f6a8..6258da6 100644
+--- a/src/Sefirah/ViewModels/CallsPageViewModel.cs
++++ b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+@@ -204,6 +204,7 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+ 
+             case CallingLineStatus.Ready:
+                 ShowDialer = true;
++                TryRunPendingAutoDial();
+                 break;
+         }
+     }
+@@ -234,13 +235,48 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+     public event EventHandler? ExternalDialPrepared;
+     private bool externalDialPending;
+ 
+-    public void PrepareExternalDial(string number)
++    // tel: link waiting for the Bluetooth line to become ready (cold start).
++    private string? autoDialNumber;
++    private DateTime autoDialDeadline;
++    private static readonly TimeSpan AutoDialWait = TimeSpan.FromSeconds(60);
++
++    public void PrepareExternalDial(string number, bool dialImmediately)
+     {
+         ApplySearchQueryAsNumber(number);
++        RequestShowDialer();
++
++        if (!dialImmediately)
++            return;
++
++        if (ShowDialer)
++        {
++            _ = DialAsync();
++            return;
++        }
++
++        autoDialNumber = PhoneNumber;
++        autoDialDeadline = DateTime.UtcNow + AutoDialWait;
++    }
++
++    /// <summary>Asks the page to show the dialer pane (matters in narrow layout).</summary>
++    public void RequestShowDialer()
++    {
+         externalDialPending = true;
+         ExternalDialPrepared?.Invoke(this, EventArgs.Empty);
+     }
+ 
++    private void TryRunPendingAutoDial()
++    {
++        var number = autoDialNumber;
++        autoDialNumber = null;
++
++        // Only dial the number from the link, and only if it is still recent and unchanged.
++        if (number is null || DateTime.UtcNow > autoDialDeadline || number != PhoneNumber)
++            return;
++
++        _ = DialAsync();
++    }
++
+     public bool ConsumeExternalDialPending()
+     {
+         var pending = externalDialPending;
+diff --git a/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs b/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs
+index 8e1f928..a5a6613 100644
+--- a/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs
++++ b/src/Sefirah/ViewModels/Settings/GeneralViewModel.cs
+@@ -133,6 +133,39 @@ public sealed partial class GeneralViewModel : BaseViewModel
+         }
+     }
+ 
++    public Dictionary<StartScreen, string> StartScreenTypes { get; } = new()
++    {
++        { StartScreen.LastUsed, "Last used" },
++        { StartScreen.CallsDialer, "Calls – dialer" },
++        { StartScreen.CallsHistory, "Calls – history" },
++        { StartScreen.Messages, "Messages" },
++        { StartScreen.Apps, "Apps" }
++    };
++
++    private string selectedStartScreen;
++    public string SelectedStartScreen
++    {
++        get => selectedStartScreen;
++        set
++        {
++            if (SetProperty(ref selectedStartScreen, value))
++                UserSettingsService.GeneralSettingsService.StartScreen = StartScreenTypes.First(t => t.Value == value).Key;
++        }
++    }
++
++    public bool AutoDialTelLinks
++    {
++        get => UserSettingsService.GeneralSettingsService.AutoDialTelLinks;
++        set
++        {
++            if (value != UserSettingsService.GeneralSettingsService.AutoDialTelLinks)
++            {
++                UserSettingsService.GeneralSettingsService.AutoDialTelLinks = value;
++                OnPropertyChanged();
++            }
++        }
++    }
++
+     private LocalDeviceEntity? localDevice;
+ 
+     private string _localDeviceName = string.Empty;
+@@ -240,6 +273,7 @@ public sealed partial class GeneralViewModel : BaseViewModel
+         selectedThemeType = ThemeTypes[CurrentTheme];
+         selectedBackdropMaterial = BackdropMaterialTypes[BackdropMaterial];
+         selectedStartupType = StartupTypes[StartupOption];
++        selectedStartScreen = StartScreenTypes[UserSettingsService.GeneralSettingsService.StartScreen];
+         selectedStorageMountPreference = StorageMountPreferenceTypes[StorageMountPreference];
+         selectedAppLanguageIndex = AppLanguageHelper.SupportedLanguages.IndexOf(AppLanguageHelper.PreferredLanguage);
+         // Load initial local device name
+diff --git a/src/Sefirah/Views/CallsPage.xaml b/src/Sefirah/Views/CallsPage.xaml
+index fe1a179..a56e9ef 100644
+--- a/src/Sefirah/Views/CallsPage.xaml
++++ b/src/Sefirah/Views/CallsPage.xaml
+@@ -318,7 +318,7 @@
+                     <TextBox
+                         x:Name="DialNumberBox"
+                         Text="{x:Bind ViewModel.PhoneNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+-                        PlaceholderText="+420 739 017 476"
++                        PlaceholderText="Paste number"
+                         FontSize="22"
+                         FontWeight="SemiBold"
+                         TextAlignment="Center"
+diff --git a/src/Sefirah/Views/MainPage.xaml.cs b/src/Sefirah/Views/MainPage.xaml.cs
+index 323d0e2..0ff5653 100644
+--- a/src/Sefirah/Views/MainPage.xaml.cs
++++ b/src/Sefirah/Views/MainPage.xaml.cs
+@@ -129,11 +129,21 @@ public sealed partial class MainPage : Page
+ 
+     private void MainNavigationView_Loaded(object sender, RoutedEventArgs e)
+     {
+-        var savedPage = ApplicationData.Current.LocalSettings.Values[Constants.LocalSettings.MainNavigationSelection] as string;
++        var startScreen = Ioc.Default.GetRequiredService<IUserSettingsService>().GeneralSettingsService.StartScreen;
++        var savedPage = startScreen switch
++        {
++            StartScreen.CallsDialer or StartScreen.CallsHistory => "Calls",
++            StartScreen.Messages => "Messages",
++            StartScreen.Apps => "Apps",
++            _ => ApplicationData.Current.LocalSettings.Values[Constants.LocalSettings.MainNavigationSelection] as string
++        };
+         var page = ViewModel.Device is not null && savedPage is not null && Pages.ContainsKey(savedPage)
+             ? savedPage
+             : "Settings";
+ 
++        if (page == "Calls" && startScreen == StartScreen.CallsDialer)
++            Ioc.Default.GetRequiredService<CallsPageViewModel>().RequestShowDialer();
++
+         NavigateToPage(page);
+ 
+         // A tel:/sms: link that arrived before the main page existed (cold start).
+diff --git a/src/Sefirah/Views/Settings/GeneralPage.xaml b/src/Sefirah/Views/Settings/GeneralPage.xaml
+index 1928ed0..3fd1d78 100644
+--- a/src/Sefirah/Views/Settings/GeneralPage.xaml
++++ b/src/Sefirah/Views/Settings/GeneralPage.xaml
+@@ -50,6 +50,25 @@
+                         SelectedItem="{x:Bind ViewModel.SelectedStartupType, Mode=TwoWay}" />
+                 </wuc:SettingsCard>
+ 
++                <!--  Start screen -->
++                <wuc:SettingsCard Description="Screen shown when Sefirah opens" Header="Start screen">
++                    <wuc:SettingsCard.HeaderIcon>
++                        <FontIcon Glyph="&#xE80F;" />
++                    </wuc:SettingsCard.HeaderIcon>
++                    <ComboBox
++                        MinWidth="140"
++                        ItemsSource="{x:Bind ViewModel.StartScreenTypes.Values}"
++                        SelectedItem="{x:Bind ViewModel.SelectedStartScreen, Mode=TwoWay}" />
++                </wuc:SettingsCard>
++
++                <!--  tel: links -->
++                <wuc:SettingsCard Description="When a phone number link (tel:) is opened, start the call right away instead of only filling the dialer" Header="Dial phone links immediately">
++                    <wuc:SettingsCard.HeaderIcon>
++                        <FontIcon Glyph="&#xE717;" />
++                    </wuc:SettingsCard.HeaderIcon>
++                    <ToggleSwitch IsOn="{x:Bind ViewModel.AutoDialTelLinks, Mode=TwoWay}" />
++                </wuc:SettingsCard>
++
+                 <!--  Backdrop material -->
+                 <wuc:SettingsCard Header="{helpers:ResourceString Name=BackdropMaterial}">
+                     <wuc:SettingsCard.HeaderIcon>

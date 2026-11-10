@@ -1,0 +1,187 @@
+From b4fe75d5d802319eca6b86df27b44a6daa5c0389 Mon Sep 17 00:00:00 2001
+From: sgrolik-base <s.grolik@baselinker.com>
+Date: Tue, 10 Nov 2026 15:47:37 +0100
+Subject: [PATCH 1/6] feat(calls): editable dialer number field with paste +
+ format cleaning
+
+- Add a TextBox above the dialer avatar so numbers can be typed or pasted
+- PhoneNumberUtils.CleanDialInput strips spaces, dashes, dots, brackets and
+  a trunk '(0)', keeping digits, '*', '#' and a leading '+'
+  e.g. '+420 (739) 017 476' -> '+420739017476'
+- Clean numbers before dialing and when submitted from contact search
+- Window-level dial shortcuts ignore keys typed into text boxes;
+  Enter in the number field dials
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/Sefirah/Utils/PhoneNumberUtils.cs        | 21 ++++++++++++
+ src/Sefirah/ViewModels/CallsPageViewModel.cs |  8 +++--
+ src/Sefirah/Views/CallsPage.xaml             | 35 ++++++++------------
+ src/Sefirah/Views/CallsPage.xaml.cs          | 22 ++++++++++++
+ 4 files changed, 62 insertions(+), 24 deletions(-)
+
+diff --git a/src/Sefirah/Utils/PhoneNumberUtils.cs b/src/Sefirah/Utils/PhoneNumberUtils.cs
+index 4a9b8e1..450337f 100644
+--- a/src/Sefirah/Utils/PhoneNumberUtils.cs
++++ b/src/Sefirah/Utils/PhoneNumberUtils.cs
+@@ -77,6 +77,27 @@ public static partial class PhoneNumberUtils
+             : trimmed;
+     }
+ 
++    /// <summary>
++    /// Strips formatting from typed or pasted dial input, e.g. "+420 (739) 017 476" -> "+420739017476".
++    /// Keeps digits, '*', '#' and a leading '+'; drops a trunk "(0)" as in "+44 (0) 20 ...".
++    /// </summary>
++    public static string CleanDialInput(string? value)
++    {
++        if (string.IsNullOrWhiteSpace(value))
++            return string.Empty;
++
++        var input = value.Replace("(0)", string.Empty);
++        var result = new System.Text.StringBuilder(input.Length);
++        foreach (var c in input)
++        {
++            if (char.IsAsciiDigit(c) || c is '*' or '#')
++                result.Append(c);
++            else if (c == '+' && result.Length == 0)
++                result.Append(c);
++        }
++        return result.ToString();
++    }
++
+     private static bool LooksLikePhoneNumber(string value)
+     {
+         if (string.IsNullOrWhiteSpace(value))
+diff --git a/src/Sefirah/ViewModels/CallsPageViewModel.cs b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+index 1a6c909..8c6785b 100644
+--- a/src/Sefirah/ViewModels/CallsPageViewModel.cs
++++ b/src/Sefirah/ViewModels/CallsPageViewModel.cs
+@@ -2,6 +2,7 @@ using CommunityToolkit.WinUI;
+ using Sefirah.Data.AppDatabase.Repository;
+ using Sefirah.Data.Models;
+ using Sefirah.Dialogs;
++using Sefirah.Utils;
+ 
+ namespace Sefirah.ViewModels;
+ 
+@@ -222,7 +223,7 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+ 
+     public void ApplySearchQueryAsNumber(string? query)
+     {
+-        var q = query?.Trim();
++        var q = PhoneNumberUtils.CleanDialInput(query);
+         if (string.IsNullOrEmpty(q)) return;
+ 
+         ClearDialContactVisual();
+@@ -243,7 +244,10 @@ public sealed partial class CallsPageViewModel : BaseViewModel
+ 
+     public async Task DialAsync()
+     {
+-        await phoneLineService.DialAsync(PhoneNumber);
++        var number = PhoneNumberUtils.CleanDialInput(PhoneNumber);
++        if (string.IsNullOrEmpty(number)) return;
++
++        await phoneLineService.DialAsync(number);
+     }
+ 
+     public void ToggleSelectingCallLog(CallLog callLog)
+diff --git a/src/Sefirah/Views/CallsPage.xaml b/src/Sefirah/Views/CallsPage.xaml
+index e1caba1..fe1a179 100644
+--- a/src/Sefirah/Views/CallsPage.xaml
++++ b/src/Sefirah/Views/CallsPage.xaml
+@@ -315,6 +315,19 @@
+                 Visibility="{x:Bind ViewModel.ShowDialer, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+ 
+                 <StackPanel VerticalAlignment="Center" Spacing="12">
++                    <TextBox
++                        x:Name="DialNumberBox"
++                        Text="{x:Bind ViewModel.PhoneNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
++                        PlaceholderText="+420 739 017 476"
++                        FontSize="22"
++                        FontWeight="SemiBold"
++                        TextAlignment="Center"
++                        HorizontalAlignment="Stretch"
++                        MaxWidth="300"
++                        InputScope="TelephoneNumber"
++                        IsSpellCheckEnabled="False"
++                        TextChanging="DialNumberBox_TextChanging" />
++
+                     <Grid Width="68" Height="68" HorizontalAlignment="Center">
+                         <controls:ContactAvatar
+                             Width="68"
+@@ -341,28 +354,6 @@
+                         TextTrimming="CharacterEllipsis"
+                         Visibility="{x:Bind ViewModel.DialContact, Mode=OneWay, Converter={StaticResource EmptyObjectToVisibilityConverter}}" />
+ 
+-                    <TextBlock
+-                        Text="{x:Bind ViewModel.PhoneNumber, Mode=OneWay}"
+-                        FontSize="22"
+-                        FontWeight="SemiBold"
+-                        TextAlignment="Center"
+-                        HorizontalAlignment="Center"
+-                        MinHeight="30"
+-                        VerticalAlignment="Center"
+-                        TextTrimming="CharacterEllipsis"
+-                        MaxWidth="300"
+-                        Visibility="{x:Bind ViewModel.DialContact, Mode=OneWay, Converter={StaticResource InverseEmptyObjectToVisibilityConverter}}" />
+-
+-                    <TextBlock
+-                        Text="{x:Bind ViewModel.PhoneNumber, Mode=OneWay}"
+-                        FontSize="14"
+-                        TextAlignment="Center"
+-                        HorizontalAlignment="Center"
+-                        TextTrimming="CharacterEllipsis"
+-                        MaxWidth="300"
+-                        Foreground="{ThemeResource TextFillColorSecondary}"
+-                        Visibility="{x:Bind ViewModel.DialContact, Mode=OneWay, Converter={StaticResource EmptyObjectToVisibilityConverter}}" />
+-
+                     <Grid ColumnSpacing="10" RowSpacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">
+                         <Grid.RowDefinitions>
+                             <RowDefinition Height="Auto"/>
+diff --git a/src/Sefirah/Views/CallsPage.xaml.cs b/src/Sefirah/Views/CallsPage.xaml.cs
+index 5801ddd..52d78c6 100644
+--- a/src/Sefirah/Views/CallsPage.xaml.cs
++++ b/src/Sefirah/Views/CallsPage.xaml.cs
+@@ -1,6 +1,7 @@
+ using Microsoft.UI.Input;
+ using Microsoft.UI.Xaml.Input;
+ using Sefirah.Data.Models;
++using Sefirah.Utils;
+ using Sefirah.ViewModels;
+ using Windows.System;
+ using Windows.UI.Core;
+@@ -77,6 +78,17 @@ public sealed partial class CallsPage : Page
+ 
+     private void Window_KeyDown(object sender, KeyRoutedEventArgs e)
+     {
++        // Text boxes handle their own typing; only Enter in the number field dials.
++        if (e.OriginalSource is TextBox textBox)
++        {
++            if (textBox == DialNumberBox && e.Key is VirtualKey.Enter)
++            {
++                _ = ViewModel.DialAsync();
++                e.Handled = true;
++            }
++            return;
++        }
++
+         if (e.Key is VirtualKey.Back)
+         {
+             ViewModel.RemoveLastDialDigitCommand.Execute(null);
+@@ -126,6 +138,16 @@ public sealed partial class CallsPage : Page
+         return dialKey is not null;
+     }
+ 
++    private void DialNumberBox_TextChanging(TextBox sender, TextBoxTextChangingEventArgs args)
++    {
++        var cleaned = PhoneNumberUtils.CleanDialInput(sender.Text);
++        if (cleaned == sender.Text)
++            return;
++
++        sender.Text = cleaned;
++        sender.SelectionStart = cleaned.Length;
++    }
++
+     private async void DialButton_Click(object sender, RoutedEventArgs e)
+     {
+         await ViewModel.DialAsync();
